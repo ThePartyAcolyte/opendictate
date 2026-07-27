@@ -37,8 +37,10 @@ def main():
         cmd = "toggle-autosend"
     elif "--toggle-realtime" in sys.argv:
         cmd = "toggle-realtime"
+    elif "--settings" in sys.argv or "settings" in sys.argv:
+        cmd = "settings"
     else:
-        print("Uso: dictate-client.py [--record|--pause|--cancel|--preview|--finish-normal|--finish-ai|--autosend-activate|--autosend-deactivate|--toggle-autopause|--toggle-bubble|--toggle-record-send|--toggle-ai|--toggle-autosend|--toggle-realtime|--cycle-model]")
+        print("Uso: dictate-client.py [--record|--pause|--cancel|--preview|--finish-normal|--finish-ai|--settings|--autosend-activate|--autosend-deactivate|--toggle-autopause|--toggle-bubble|--toggle-record-send|--toggle-ai|--toggle-autosend|--toggle-realtime|--cycle-model]")
         sys.exit(0)
 
     try:
