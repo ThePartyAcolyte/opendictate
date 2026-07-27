@@ -67,6 +67,15 @@ class ConfigWindow(Gtk.Window):
         switch_box5.pack_start(self.auto_pause_switch, False, False, 0)
         general_box.pack_start(switch_box5, False, False, 0)
 
+        switch_box_rt = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        lbl_realtime = Gtk.Label(label=self.i18n.t("lbl_realtime"))
+        self.realtime_switch = Gtk.Switch()
+        self.realtime_switch.set_active(self.config.get("realtime_mode", True))
+        self.realtime_switch.connect("notify::active", self.auto_save)
+        switch_box_rt.pack_start(lbl_realtime, False, False, 0)
+        switch_box_rt.pack_start(self.realtime_switch, False, False, 0)
+        general_box.pack_start(switch_box_rt, False, False, 0)
+
         switch_box6 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         lbl_autostart = Gtk.Label(label=self.i18n.t("lbl_autostart"))
         self.autostart_switch = Gtk.Switch()
@@ -368,6 +377,8 @@ class ConfigWindow(Gtk.Window):
         self.ai_enabled_switch.set_active(self.config.get("ai_enabled", False))
         self.hide_bubble_switch.set_active(self.config.get("hide_bubble", False))
         self.auto_pause_switch.set_active(self.config.get("auto_pause_media", True))
+        if hasattr(self, 'realtime_switch'):
+            self.realtime_switch.set_active(self.config.get("realtime_mode", True))
         if hasattr(self, 'notifications_switch'):
             self.notifications_switch.set_active(self.config.get("show_notifications", True))
         
@@ -402,6 +413,8 @@ class ConfigWindow(Gtk.Window):
         self.config["ai_enabled"] = self.ai_enabled_switch.get_active()
         self.config["hide_bubble"] = self.hide_bubble_switch.get_active()
         self.config["auto_pause_media"] = self.auto_pause_switch.get_active()
+        if hasattr(self, 'realtime_switch'):
+            self.config["realtime_mode"] = self.realtime_switch.get_active()
         if hasattr(self, 'notifications_switch'):
             self.config["show_notifications"] = self.notifications_switch.get_active()
 

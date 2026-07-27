@@ -53,6 +53,9 @@ TRANSLATIONS = {
         "transcription_auto": "Automatic",
         
         "lbl_autosend": "Auto-send on completion",
+        "lbl_realtime": "Real-time Chunk Analysis",
+        "realtime_enabled": "Real-time: Enabled",
+        "realtime_disabled": "Real-time: Disabled",
         "lbl_ai_enabled": "AI Cleanup and Formatting",
         "lbl_hide_bubble": "Hide Text Bubble",
         "lbl_auto_pause": "Auto-pause Media",
@@ -144,6 +147,9 @@ TRANSLATIONS = {
         "transcription_auto": "Automático",
 
         "lbl_autosend": "Auto-enviar al transcribir",
+        "lbl_realtime": "Análisis en tiempo real (Chunks)",
+        "realtime_enabled": "Tiempo Real: Activado",
+        "realtime_disabled": "Tiempo Real: Desactivado",
         "lbl_ai_enabled": "Limpieza y Formateo con IA",
         "lbl_hide_bubble": "Ocultar Burbuja de Texto",
         "lbl_auto_pause": "Auto-pausar Multimedia",
@@ -236,6 +242,9 @@ TRANSLATIONS = {
         "transcription_auto": "Automatisch",
         
         "lbl_autosend": "Nach Abschluss automatisch senden",
+        "lbl_realtime": "Echtzeit-Chunk-Analyse",
+        "realtime_enabled": "Echtzeit: Aktiviert",
+        "realtime_disabled": "Echtzeit: Deaktiviert",
         "lbl_ai_enabled": "KI-Bereinigung und Formatierung",
         "lbl_hide_bubble": "Textblase ausblenden",
         "lbl_auto_pause": "Medien automatisch pausieren",
@@ -328,6 +337,9 @@ TRANSLATIONS = {
         "transcription_auto": "Automatique",
         
         "lbl_autosend": "Envoi automatique à la fin",
+        "lbl_realtime": "Analyse en temps réel (Chunks)",
+        "realtime_enabled": "Temps réel : Activé",
+        "realtime_disabled": "Temps réel : Désactivé",
         "lbl_ai_enabled": "Nettoyage et formatage IA",
         "lbl_hide_bubble": "Masquer la bulle de texte",
         "lbl_auto_pause": "Pause auto des médias",

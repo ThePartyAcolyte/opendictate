@@ -637,6 +637,15 @@ class DictationDaemon:
         self.export_state()
         self.show_notification("OpenDictate", self.i18n.t("autosend_enabled") if new_state else self.i18n.t("autosend_disabled"))
 
+    def action_toggle_realtime(self):
+        new_state = not self.config.get("realtime_mode", True)
+        self.config["realtime_mode"] = new_state
+        self.save_config()
+        if hasattr(self, 'realtime_switch'):
+            self.realtime_switch.set_active(new_state)
+        self.export_state()
+        self.show_notification("OpenDictate", self.i18n.t("realtime_enabled") if new_state else self.i18n.t("realtime_disabled"))
+
     def action_autosend_activate(self):
         self.config["auto_send"] = True
         self.save_config()
@@ -738,6 +747,8 @@ class DictationDaemon:
                     GLib.idle_add(self.action_toggle_ai)
                 elif data == "toggle-autosend":
                     GLib.idle_add(self.action_toggle_autosend)
+                elif data in ["toggle-realtime", "toggle_realtime"]:
+                    GLib.idle_add(self.action_toggle_realtime)
                 elif data == "toggle-autopause":
                     val = not self.config.get("auto_pause_media", True)
                     self.config["auto_pause_media"] = val
@@ -920,7 +931,8 @@ class DictationDaemon:
         )
         self.audio_file_handle = open(AUDIO_FILE + ".pcm", "wb")
         threading.Thread(target=self.process_audio_stream, daemon=True).start()
-        threading.Thread(target=self.streaming_transcriber_thread, daemon=True).start()
+        if self.config.get("realtime_mode", True):
+            threading.Thread(target=self.streaming_transcriber_thread, daemon=True).start()
 
     def export_state(self):
         state_data = {
@@ -931,6 +943,7 @@ class DictationDaemon:
             "ai_enabled": self.config.get("ai_enabled", False),
             "autosend_enabled": self.config.get("auto_send", False),
             "autopause_enabled": self.config.get("auto_pause_media", True),
+            "realtime_enabled": self.config.get("realtime_mode", True),
             "hide_bubble": self.config.get("hide_bubble", False),
             "send_status": getattr(self, "send_status", "idle"),
             "start_time": getattr(self, 'start_time', 0),
@@ -1097,24 +1110,20 @@ class DictationDaemon:
             sample_rate = 16000
             bytes_per_sec = sample_rate * 2
             current_audio_time = len(self.audio_buffer) / bytes_per_sec
-            overlap = 2.0
             
-            if current_audio_time > self.last_transcribed_time:
-                chunk_start_time = max(0.0, self.last_transcribed_time - overlap)
-                start_idx = int(chunk_start_time * bytes_per_sec)
-                chunk_bytes = self.audio_buffer[start_idx:]
+            if not self.config.get("realtime_mode", True):
+                # Full Audio Batch Mode: transcribe entire audio_buffer at once
+                logging.info("Executing full audio batch transcription...")
+                chunk_bytes = bytes(self.audio_buffer)
                 if len(chunk_bytes) % 2 != 0:
                     chunk_bytes = chunk_bytes[:-1]
                 
                 audio_int16 = np.frombuffer(chunk_bytes, dtype=np.int16)
                 audio_float32 = audio_int16.astype(np.float32) / 32768.0
                 
-                initial_prompt = self.confirmed_text[-200:] if self.confirmed_text else None
-                
                 kwargs = {
                     "beam_size": self.config.get("beam_size", 5),
                     "word_timestamps": True,
-                    "initial_prompt": initial_prompt,
                     "vad_filter": self.config.get("vad_filter", False)
                 }
                 
@@ -1129,26 +1138,68 @@ class DictationDaemon:
                     kwargs["temperature"] = temp
                 
                 segments, info = self.model.transcribe(audio_float32, **kwargs)
-                
-                chunk_text = ""
-                chunk_duration = current_audio_time - chunk_start_time
+                full_text = ""
                 
                 for segment in segments:
-                    # Update progress UI using the level bar
-                    if chunk_duration > 0:
-                        pct = (segment.end / chunk_duration)
+                    if current_audio_time > 0:
+                        pct = segment.end / current_audio_time
                         pct = min(1.0, max(0.0, pct))
                         GLib.idle_add(self.level_bar.set_value, pct)
+                    full_text += segment.text
+                
+                self.confirmed_text = full_text
+            else:
+                overlap = 2.0
+                if current_audio_time > self.last_transcribed_time:
+                    chunk_start_time = max(0.0, self.last_transcribed_time - overlap)
+                    start_idx = int(chunk_start_time * bytes_per_sec)
+                    chunk_bytes = self.audio_buffer[start_idx:]
+                    if len(chunk_bytes) % 2 != 0:
+                        chunk_bytes = chunk_bytes[:-1]
+                    
+                    audio_int16 = np.frombuffer(chunk_bytes, dtype=np.int16)
+                    audio_float32 = audio_int16.astype(np.float32) / 32768.0
+                    
+                    initial_prompt = self.confirmed_text[-200:] if self.confirmed_text else None
+                    
+                    kwargs = {
+                        "beam_size": self.config.get("beam_size", 5),
+                        "word_timestamps": True,
+                        "initial_prompt": initial_prompt,
+                        "vad_filter": self.config.get("vad_filter", False)
+                    }
+                    
+                    lang = self.config.get("language", "auto")
+                    if lang != "auto":
+                        kwargs["language"] = lang
                         
-                    if segment.words:
-                        for word in segment.words:
-                            abs_time = chunk_start_time + word.start
-                            if abs_time >= (self.last_transcribed_time - 0.4):
-                                chunk_text += word.word
+                    temp = self.config.get("temperature", 0.0)
+                    if temp == 0.0:
+                        kwargs["temperature"] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
                     else:
-                        chunk_text += segment.text
-                        
-                self.confirmed_text += chunk_text
+                        kwargs["temperature"] = temp
+                    
+                    segments, info = self.model.transcribe(audio_float32, **kwargs)
+                    
+                    chunk_text = ""
+                    chunk_duration = current_audio_time - chunk_start_time
+                    
+                    for segment in segments:
+                        # Update progress UI using the level bar
+                        if chunk_duration > 0:
+                            pct = (segment.end / chunk_duration)
+                            pct = min(1.0, max(0.0, pct))
+                            GLib.idle_add(self.level_bar.set_value, pct)
+                            
+                        if segment.words:
+                            for word in segment.words:
+                                abs_time = chunk_start_time + word.start
+                                if abs_time >= (self.last_transcribed_time - 0.4):
+                                    chunk_text += word.word
+                        else:
+                            chunk_text += segment.text
+                            
+                    self.confirmed_text += chunk_text
                 
             text = self.confirmed_text.strip()
             logging.info(f"Final transcription complete: {len(text)} chars")

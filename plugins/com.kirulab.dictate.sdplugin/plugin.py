@@ -42,7 +42,8 @@ active_contexts = {
     "ai": set(),
     "autosend": set(),
     "autopause": set(),
-    "bubble": set()
+    "bubble": set(),
+    "realtime": set()
 }
 
 force_update = False
@@ -205,6 +206,14 @@ async def watch_state(ws):
                     "context": ctx,
                     "payload": {"state": 0 if hide_bubble else 1}
                 }))
+                
+            realtime_enabled = state_data.get("realtime_enabled", True)
+            for ctx in active_contexts["realtime"].copy():
+                await ws.send(json.dumps({
+                    "event": "setState",
+                    "context": ctx,
+                    "payload": {"state": 1 if realtime_enabled else 0}
+                }))
 
         if changed or needs_animation:
             # Generate animated background
@@ -268,6 +277,8 @@ async def connect_streamdeck():
                     active_contexts["autopause"].add(context)
                 elif act_suffix == "toggle_bubble":
                     active_contexts["bubble"].add(context)
+                elif act_suffix == "toggle_realtime":
+                    active_contexts["realtime"].add(context)
                     
                 # Force immediate update for new buttons
                 state_data = get_daemon_state()
@@ -279,6 +290,7 @@ async def connect_streamdeck():
                 autosend_enabled = state_data.get("autosend_enabled", False)
                 autopause_enabled = state_data.get("autopause_enabled", True)
                 hide_bubble = state_data.get("hide_bubble", False)
+                realtime_enabled = state_data.get("realtime_enabled", True)
                 
                 state_idx = 0
                 if current_state == "RECORDING":
@@ -349,6 +361,12 @@ async def connect_streamdeck():
                         "context": context,
                         "payload": {"state": 0 if hide_bubble else 1}
                     })))
+                elif act_suffix == "toggle_realtime":
+                    asyncio.create_task(ws.send(json.dumps({
+                        "event": "setState",
+                        "context": context,
+                        "payload": {"state": 1 if realtime_enabled else 0}
+                    })))
                 elif act_suffix == "send":
                     send_usable = 1 if current_state in ["RECORDING", "PAUSED"] else 0
                     asyncio.create_task(ws.send(json.dumps({
@@ -391,6 +409,8 @@ async def connect_streamdeck():
                     active_contexts["autopause"].remove(context)
                 elif act_suffix == "toggle_bubble" and context in active_contexts["bubble"]:
                     active_contexts["bubble"].remove(context)
+                elif act_suffix == "toggle_realtime" and context in active_contexts["realtime"]:
+                    active_contexts["realtime"].remove(context)
 
             elif event == "keyUp":
                 act_suffix = action.split(".")[-1]
@@ -418,6 +438,8 @@ async def connect_streamdeck():
                     subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--toggle-autopause"])
                 elif act_suffix == "toggle_bubble":
                     subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--toggle-bubble"])
+                elif act_suffix == "toggle_realtime":
+                    subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--toggle-realtime"])
 
 if __name__ == "__main__":
     if port:

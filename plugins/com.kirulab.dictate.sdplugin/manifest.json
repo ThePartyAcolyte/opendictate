@@ -92,6 +92,15 @@
         {"Name": "Off", "Image": "icons/bubble_off"},
         {"Name": "On", "Image": "icons/bubble_on"}
       ]
+    },
+    {
+      "Icon": "icons/realtime_on",
+      "Name": "Toggle Real-Time Chunk Mode",
+      "UUID": "com.kirulab.dictate.toggle_realtime",
+      "States": [
+        {"Name": "Off", "Image": "icons/realtime_off"},
+        {"Name": "On", "Image": "icons/realtime_on"}
+      ]
     }
   ],
   "Author": "Kirulab",
