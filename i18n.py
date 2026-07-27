@@ -392,13 +392,20 @@ class Translator:
             self.lang = DEFAULT_LANG
             self.lang = DEFAULT_LANG
 
-    def t(self, key, *args):
+    def t(self, key, *args, **kwargs):
         text = TRANSLATIONS[self.lang].get(key, TRANSLATIONS[DEFAULT_LANG].get(key, key))
+        if kwargs:
+            try:
+                return text.format(**kwargs)
+            except Exception:
+                pass
         if args:
-            # Check if text expects keyword formatting
-            if '{size}' in text and 'size' in args[0] if isinstance(args[0], dict) else False:
-                return text.format(**args[0])
-            return text.format(*args)
+            try:
+                if isinstance(args[0], dict):
+                    return text.format(**args[0])
+                return text.format(*args)
+            except Exception:
+                pass
         return text
 
 def get_translator(lang_code):
