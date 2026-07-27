@@ -35,7 +35,7 @@ gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
 
 from i18n import get_translator
-from core.config import ConfigManager
+from core.config import ConfigManager, CONFIG_PATH
 from core.audio import AudioRecorder
 from core.engine import WhisperEngine
 from core.llm import LLMService

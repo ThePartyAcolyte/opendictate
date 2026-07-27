@@ -204,10 +204,28 @@ class OpenDictateIndicator extends PanelMenu.Button {
                     });
                 } catch (e) {
                     console.error(`OpenDictate: Socket error sending ${cmd}: ${e.message}`);
+                    if (cmd !== 'quit') {
+                        this._ensureDaemonRunning();
+                    }
                 }
             });
         } catch (e) {
             console.error(`OpenDictate: Socket setup error: ${e.message}`);
+            if (cmd !== 'quit') {
+                this._ensureDaemonRunning();
+            }
+        }
+    }
+
+    _ensureDaemonRunning() {
+        try {
+            let daemonBin = `${GLib.get_home_dir()}/.local/share/dictate-whisper/.venv/bin/python`;
+            let daemonScript = `${GLib.get_home_dir()}/.local/share/dictate-whisper/dictate-daemon.py`;
+            if (GLib.file_test(daemonScript, GLib.FileTest.EXISTS)) {
+                GLib.spawn_command_line_async(`${daemonBin} ${daemonScript} --force-start`);
+            }
+        } catch (e) {
+            console.error(`OpenDictate: Failed to auto-start daemon: ${e.message}`);
         }
     }
     
