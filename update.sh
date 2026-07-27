@@ -44,6 +44,6 @@ EOF
 echo "🔄 Reiniciando demonio..."
 pkill -9 -f dictate-daemon.py
 sleep 1
-nohup "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/dictate-daemon.py" >/dev/null 2>&1 &
+nohup "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/dictate-daemon.py" --force-start >/dev/null 2>&1 &
 
 echo "✅ Actualización completada."

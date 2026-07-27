@@ -623,16 +623,17 @@ class DictationDaemon:
 
 
 if __name__ == "__main__":
-    try:
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.connect(SOCKET_PATH)
-        if "--settings" in sys.argv or len(sys.argv) == 1:
+    if "--force-start" not in sys.argv:
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(SOCKET_PATH)
             s.sendall(b"settings")
-        s.close()
-        print("OpenDictate is already running. Opening settings window.")
-        sys.exit(0)
-    except Exception:
-        pass
+            s.close()
+            print("OpenDictate is already running. Opening settings window.")
+            sys.exit(0)
+        except Exception:
+            pass
 
     app = DictationDaemon()
     Gtk.main()
