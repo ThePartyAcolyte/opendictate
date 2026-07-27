@@ -1,13 +1,30 @@
+"""
+GTK Configuration Window UI module for OpenDictate.
+
+Renders multi-tab settings window for General settings, Application Profiles,
+AI Model settings, Whisper Model Manager, and Advanced Desktop Integration.
+"""
+
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, GLib
 import sqlite3
 import json
 import os
+from typing import Dict, Any, Optional, Callable
 from i18n import get_translator
 
+
 class ConfigWindow(Gtk.Window):
-    def __init__(self, db_path, config_path, on_config_saved=None, daemon_ref=None):
+    """GTK Settings and Profile management window."""
+
+    def __init__(
+        self,
+        db_path: str,
+        config_path: str,
+        on_config_saved: Optional[Callable[[Optional[Dict[str, Any]]], None]] = None,
+        daemon_ref: Optional[Any] = None
+    ) -> None:
         self.db_path = db_path
         self.config_path = config_path
         self.on_config_saved = on_config_saved
