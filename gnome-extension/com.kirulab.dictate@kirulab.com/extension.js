@@ -60,14 +60,14 @@ class OpenDictateIndicator extends PanelMenu.Button {
         // Gear Icon & Button for menu
         this._gearIcon = new St.Icon({
             icon_name: 'emblem-system-symbolic',
-            icon_size: 18,
-            style_class: 'system-status-icon opendictate-gear-icon',
+            icon_size: 20,
+            style_class: 'system-status-icon',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._gearButton = new St.Button({
             child: this._gearIcon,
-            style_class: 'opendictate-action-button opendictate-gear-button',
+            style_class: 'opendictate-action-button',
             reactive: false,
             can_focus: false,
             x_align: Clutter.ActorAlign.CENTER,
@@ -77,7 +77,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         // Microphone/Record Icon (Main Button)
         this._micIcon = new St.Icon({
             icon_name: 'audio-input-microphone-symbolic',
-            icon_size: 18,
+            icon_size: 20,
             style_class: 'system-status-icon',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
@@ -122,7 +122,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         this._sendButton = new St.Button({
             child: new St.Icon({
                 icon_name: 'mail-send-symbolic',
-                icon_size: 18,
+                icon_size: 20,
                 style_class: 'system-status-icon opendictate-send-icon',
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
@@ -146,7 +146,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         this._cancelButton = new St.Button({
             child: new St.Icon({
                 icon_name: 'process-stop-symbolic',
-                icon_size: 18,
+                icon_size: 20,
                 style_class: 'system-status-icon opendictate-cancel-icon',
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
