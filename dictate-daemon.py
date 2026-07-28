@@ -204,11 +204,7 @@ class DictationDaemon:
         self.last_transcribed_time = 0.0
 
         if not self.config.get("hide_bubble", False):
-            self.bubble.window.show_all()
-            self.bubble.text_view_scroll.hide()
-            self.bubble.button_box.hide()
-            self.bubble.time_label.show()
-            self.bubble.level_bar.show()
+            self.bubble.show_recording_state()
 
         self.bubble.status_icon.set_text("🔴")
         self.bubble.time_label.set_text("00:00")
@@ -292,6 +288,10 @@ class DictationDaemon:
         self.audio.stop_recording()
         self.media.resume_media()
         self.play_sound("/usr/share/sounds/freedesktop/stereo/device-removed.oga")
+
+        if not self.config.get("hide_bubble", False):
+            self.bubble.show_processing_state()
+
         self.bubble.status_icon.set_text("🔄")
 
         ctx = self.bubble.level_bar.get_style_context()
@@ -368,6 +368,10 @@ class DictationDaemon:
         GLib.timeout_add(700, self.reset_state)
 
     def on_transcription_done(self, text: str) -> None:
+        if self.state == "IDLE":
+            logging.info("on_transcription_done called while IDLE (canceled). Aborting.")
+            return
+
         if not text:
             self.reset_state()
             return
@@ -400,11 +404,16 @@ class DictationDaemon:
     def _llm_clean_loop(self, text: str) -> None:
         cleaned = self.llm.clean_text(
             text, self.config, self.current_app_class,
-            on_chunk=lambda chunk: GLib.idle_add(self.bubble.set_live_text, chunk)
+            on_chunk=lambda chunk: GLib.idle_add(self.bubble.set_live_text, chunk) if self.state != "IDLE" else None
         )
-        GLib.idle_add(self.finalize_text, cleaned)
+        if self.state != "IDLE":
+            GLib.idle_add(self.finalize_text, cleaned)
 
     def finalize_text(self, text: str) -> None:
+        if self.state == "IDLE":
+            logging.info("finalize_text called while IDLE (canceled). Aborting.")
+            return
+
         original = getattr(self, 'last_original_text', text)
         llm_text = text if original != text else None
         self.config_manager.save_history_record(self.current_app_class, self.current_window_title, original, llm_text)
@@ -522,7 +531,9 @@ class DictationDaemon:
             self.action_record()
 
     def action_cancel(self) -> None:
-        self.audio.stop_recording()
+        logging.info(f"Action: Cancel triggered (current state: {self.state})")
+        if self.state in ["RECORDING", "PAUSED"]:
+            self.audio.stop_recording()
         self.reset_state()
 
     def action_send(self) -> None:

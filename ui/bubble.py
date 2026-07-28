@@ -90,21 +90,21 @@ class BubbleWindow:
         self.button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
         self.button_box.set_halign(Gtk.Align.CENTER)
 
-        btn_close = Gtk.Button(label="❌")
-        btn_close.set_tooltip_text(self.i18n.t("close"))
-        btn_close.connect("clicked", lambda w: self.on_cancel())
+        self.btn_close = Gtk.Button(label="❌")
+        self.btn_close.set_tooltip_text(self.i18n.t("close"))
+        self.btn_close.connect("clicked", lambda w: self.on_cancel())
 
-        btn_copy = Gtk.Button(label="📋")
-        btn_copy.set_tooltip_text(self.i18n.t("copy_clipboard"))
-        btn_copy.connect("clicked", lambda w: self.on_copy())
+        self.btn_copy = Gtk.Button(label="📋")
+        self.btn_copy.set_tooltip_text(self.i18n.t("copy_clipboard"))
+        self.btn_copy.connect("clicked", lambda w: self.on_copy())
 
-        btn_insert = Gtk.Button(label="📝")
-        btn_insert.set_tooltip_text(self.i18n.t("insert_text"))
-        btn_insert.connect("clicked", lambda w: self.on_finish())
+        self.btn_insert = Gtk.Button(label="📝")
+        self.btn_insert.set_tooltip_text(self.i18n.t("insert_text"))
+        self.btn_insert.connect("clicked", lambda w: self.on_finish())
 
-        self.button_box.pack_start(btn_close, False, False, 0)
-        self.button_box.pack_start(btn_copy, False, False, 0)
-        self.button_box.pack_start(btn_insert, False, False, 0)
+        self.button_box.pack_start(self.btn_close, False, False, 0)
+        self.button_box.pack_start(self.btn_copy, False, False, 0)
+        self.button_box.pack_start(self.btn_insert, False, False, 0)
 
         self.box.pack_start(self.status_icon, False, False, 0)
         self.box.pack_start(self.text_view_scroll, True, True, 0)
@@ -169,6 +169,30 @@ class BubbleWindow:
         cr.paint()
         return False
 
+    def show_recording_state(self) -> None:
+        """Configure layout for RECORDING or PAUSED state."""
+        self.window.show_all()
+        self.status_icon.show()
+        self.time_label.show()
+        self.level_bar.show()
+        self.text_view_scroll.hide()
+        self.button_box.show_all()
+        self.btn_copy.hide()
+        self.btn_insert.hide()
+        self.btn_close.show()
+
+    def show_processing_state(self) -> None:
+        """Configure layout for TRANSCRIBING or CLEANING processing state with cancel button."""
+        self.window.show_all()
+        self.status_icon.show()
+        self.time_label.show()
+        self.level_bar.show()
+        self.text_view_scroll.hide()
+        self.button_box.show_all()
+        self.btn_copy.hide()
+        self.btn_insert.hide()
+        self.btn_close.show()
+
     def show_preview_state(self, text: str) -> None:
         """Configure window layout for PREVIEW state showing text buffer and action buttons."""
         self.window.show_all()
@@ -179,6 +203,9 @@ class BubbleWindow:
         self.text_buffer.set_text(text)
         self.text_view_scroll.show_all()
         self.button_box.show_all()
+        self.btn_close.show()
+        self.btn_copy.show()
+        self.btn_insert.show()
 
     def set_live_text(self, text: str) -> None:
         """Update preview text buffer and auto-scroll to end."""

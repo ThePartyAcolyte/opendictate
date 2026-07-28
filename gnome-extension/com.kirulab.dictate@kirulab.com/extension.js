@@ -83,6 +83,8 @@ class OpenDictateIndicator extends PanelMenu.Button {
                     this._sendCommand('pause');
                 } else if (this._stateData && this._stateData.state === "PAUSED") {
                     this._sendCommand('record');
+                } else if (this._stateData && (this._stateData.state === "TRANSCRIBING" || this._stateData.state === "CLEANING" || this._stateData.state === "PROCESSING")) {
+                    this._sendCommand('cancel');
                 } else {
                     this._sendCommand('record');
                 }
@@ -279,7 +281,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
             this._waveform.hide();
             this._timeLabel.hide();
             this._sendButton.hide();
-            this._cancelButton.hide();
+            this._cancelButton.show();
             this._stopTimer();
         } else {
             icon.icon_name = 'audio-input-microphone-symbolic';
