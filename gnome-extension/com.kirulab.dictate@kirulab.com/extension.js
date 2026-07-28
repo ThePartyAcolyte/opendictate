@@ -60,7 +60,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         // Gear Icon & Button for menu
         this._gearIcon = new St.Icon({
             icon_name: 'emblem-system-symbolic',
-            icon_size: 20,
+            icon_size: 22,
             style_class: 'system-status-icon',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
@@ -68,16 +68,24 @@ class OpenDictateIndicator extends PanelMenu.Button {
         this._gearButton = new St.Button({
             child: this._gearIcon,
             style_class: 'opendictate-action-button',
-            reactive: false,
-            can_focus: false,
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._gearButton.connect('button-press-event', (actor, event) => {
+            if (event.get_button() === 1) {
+                this.menu.toggle();
+                return Clutter.EVENT_STOP;
+            }
+            return Clutter.EVENT_PROPAGATE;
         });
         
         // Microphone/Record Icon (Main Button)
         this._micIcon = new St.Icon({
             icon_name: 'audio-input-microphone-symbolic',
-            icon_size: 20,
+            icon_size: 22,
             style_class: 'system-status-icon',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
@@ -122,7 +130,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         this._sendButton = new St.Button({
             child: new St.Icon({
                 icon_name: 'mail-send-symbolic',
-                icon_size: 20,
+                icon_size: 22,
                 style_class: 'system-status-icon opendictate-send-icon',
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
@@ -146,7 +154,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         this._cancelButton = new St.Button({
             child: new St.Icon({
                 icon_name: 'process-stop-symbolic',
-                icon_size: 20,
+                icon_size: 22,
                 style_class: 'system-status-icon opendictate-cancel-icon',
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
