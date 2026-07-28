@@ -1,40 +1,37 @@
 .opendictate-box {
-    spacing: 4px;
-    padding: 2px 6px;
+    spacing: 5px;
+    padding: 2px 4px;
     align-items: center;
 }
 
 .opendictate-action-button {
     border-radius: 9999px;
-    width: 26px;
-    height: 26px;
+    width: 28px;
+    height: 28px;
     padding: 0px;
     margin: 1px 2px;
-    background-color: rgba(255, 255, 255, 0.10);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
     transition-duration: 150ms;
 }
 
 .opendictate-action-button:hover {
-    background-color: rgba(255, 255, 255, 0.22);
-    border-color: rgba(255, 255, 255, 0.18);
+    background-color: rgba(255, 255, 255, 0.30);
+    border-color: rgba(255, 255, 255, 0.25);
 }
 
 .opendictate-action-button:active {
-    background-color: rgba(255, 255, 255, 0.35);
+    background-color: rgba(255, 255, 255, 0.42);
 }
 
 .opendictate-gear-button {
-    background-color: rgba(255, 255, 255, 0.08);
+    background-color: rgba(255, 255, 255, 0.16);
+    border: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-.opendictate-gear-button:hover {
-    background-color: rgba(255, 255, 255, 0.20);
-}
-
-.opendictate-gear-icon {
-    margin: 0;
-    padding: 0;
+.opendictate-icon {
+    icon-size: 18px;
 }
 
 .recording {
