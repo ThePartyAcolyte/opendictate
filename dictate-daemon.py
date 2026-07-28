@@ -18,6 +18,7 @@ import shutil
 import logging
 import threading
 import subprocess
+import numpy as np
 from typing import Dict, Any, Optional
 from logging.handlers import RotatingFileHandler
 
