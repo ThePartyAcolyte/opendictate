@@ -57,10 +57,19 @@ class OpenDictateIndicator extends PanelMenu.Button {
         
         this._box = new St.BoxLayout({ style_class: 'opendictate-box' });
         
-        // Gear Icon for menu
+        // Gear Icon & Button for menu
         this._gearIcon = new St.Icon({
             icon_name: 'emblem-system-symbolic',
             style_class: 'system-status-icon opendictate-gear-icon',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+        });
+        this._gearButton = new St.Button({
+            child: this._gearIcon,
+            style_class: 'opendictate-action-button opendictate-gear-button',
+            reactive: false,
+            can_focus: false,
+            x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
         });
         
@@ -68,6 +77,8 @@ class OpenDictateIndicator extends PanelMenu.Button {
         this._micIcon = new St.Icon({
             icon_name: 'audio-input-microphone-symbolic',
             style_class: 'system-status-icon',
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
         });
         this._mainButton = new St.Button({
             child: this._micIcon,
@@ -75,6 +86,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
             reactive: true,
             can_focus: true,
             track_hover: true,
+            x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
         });
         this._mainButton.connect('button-press-event', (actor, event) => {
@@ -109,8 +121,11 @@ class OpenDictateIndicator extends PanelMenu.Button {
             child: new St.Icon({
                 icon_name: 'mail-send-symbolic',
                 style_class: 'system-status-icon opendictate-send-icon',
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
             }),
             style_class: 'opendictate-action-button',
+            x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
             reactive: true,
             can_focus: true,
@@ -129,8 +144,11 @@ class OpenDictateIndicator extends PanelMenu.Button {
             child: new St.Icon({
                 icon_name: 'process-stop-symbolic',
                 style_class: 'system-status-icon opendictate-cancel-icon',
+                x_align: Clutter.ActorAlign.CENTER,
+                y_align: Clutter.ActorAlign.CENTER,
             }),
             style_class: 'opendictate-action-button',
+            x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
             reactive: true,
             can_focus: true,
@@ -145,7 +163,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         });
         
         // Add children
-        this._box.add_child(this._gearIcon);
+        this._box.add_child(this._gearButton);
         this._box.add_child(this._mainButton);
         this._box.add_child(this._waveform);
         this._box.add_child(this._timeLabel);
