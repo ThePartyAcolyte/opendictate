@@ -39,6 +39,7 @@ from core.config import ConfigManager, CONFIG_PATH
 from core.audio import AudioRecorder
 from core.engine import WhisperEngine
 from core.llm import LLMService
+from core.mpris import MediaController
 from core.ipc import IPCServer, SOCKET_PATH
 from core.window_utils import get_active_window_info
 from ui.bubble import BubbleWindow
@@ -56,6 +57,7 @@ class DictationDaemon:
         self.audio = AudioRecorder()
         self.engine = WhisperEngine()
         self.llm = LLMService(self.config_manager)
+        self.media = MediaController()
 
         self.state: str = "IDLE"
         self.next_action: Optional[str] = None
@@ -192,6 +194,7 @@ class DictationDaemon:
 
         self.current_app_class, self.current_window_title = get_active_window_info()
         self.play_sound("/usr/share/sounds/freedesktop/stereo/audio-volume-change.oga")
+        self.media.pause_media(self.config)
 
         self.state = "RECORDING"
         self.start_time = time.time()
@@ -287,6 +290,7 @@ class DictationDaemon:
         self.update_status(self.i18n.t("transcribing"))
 
         self.audio.stop_recording()
+        self.media.resume_media()
         self.play_sound("/usr/share/sounds/freedesktop/stereo/device-removed.oga")
         self.bubble.status_icon.set_text("🔄")
 
@@ -450,6 +454,7 @@ class DictationDaemon:
 
     def reset_state(self) -> bool:
         logging.info("Resetting state to IDLE")
+        self.media.resume_media()
         if self.bubble.window.get_realized():
             pos = self.bubble.window.get_position()
             size = self.bubble.window.get_size()
