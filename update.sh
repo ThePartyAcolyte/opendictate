@@ -43,11 +43,10 @@ EOF
 
 echo "🔄 Reiniciando demonio..."
 pkill -9 -f dictate-daemon.py
+rm -f /tmp/dictate_daemon.socket
 sleep 1
-if command -v systemd-run &>/dev/null; then
-    systemd-run --user --unit=dictate-daemon "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/dictate-daemon.py" --force-start >/dev/null 2>&1
-else
-    nohup "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/dictate-daemon.py" --force-start >/dev/null 2>&1 &
-fi
+export DISPLAY="${DISPLAY:-:0}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+nohup "$INSTALL_DIR/.venv/bin/python" "$INSTALL_DIR/dictate-daemon.py" --force-start >/dev/null 2>&1 &
 
 echo "✅ Actualización completada."
