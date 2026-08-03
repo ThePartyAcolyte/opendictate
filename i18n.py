@@ -61,6 +61,7 @@ TRANSLATIONS = {
         "lbl_auto_pause": "Auto-pause Media",
         "lbl_autostart": "Start with System",
         "lbl_notifications": "Show System Notifications",
+        "lbl_restore_focus": "Restore window focus before pasting",
         "lbl_vad": "VAD Filter (Anti-noise)",
         
         "btn_save_general": "Save General Settings",
@@ -155,6 +156,7 @@ TRANSLATIONS = {
         "lbl_auto_pause": "Auto-pausar Multimedia",
         "lbl_autostart": "Iniciar con el Sistema",
         "lbl_notifications": "Mostrar Notificaciones del Sistema",
+        "lbl_restore_focus": "Restaurar foco de ventana antes de pegar",
         "lbl_vad": "Filtro VAD (Anti-ruido)",
 
         "btn_save_general": "Guardar Configuración General",

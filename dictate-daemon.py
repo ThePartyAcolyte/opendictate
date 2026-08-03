@@ -42,7 +42,7 @@ from core.engine import WhisperEngine
 from core.llm import LLMService
 from core.mpris import MediaController
 from core.ipc import IPCServer, SOCKET_PATH
-from core.window_utils import get_active_window_info
+from core.window_utils import get_active_window_info, restore_window_focus
 from ui.bubble import BubbleWindow
 from ui.tray import TrayManager
 
@@ -142,8 +142,25 @@ class DictationDaemon:
 
     def export_state(self) -> None:
         """Export state telemetry to /tmp/dictate_state.json for GNOME extension / OpenDeck."""
+        status_key_map = {
+            "RECORDING": "recording",
+            "PAUSED": "paused",
+            "TRANSCRIBING": "transcribing",
+            "CLEANING": "cleaning",
+            "PROCESSING": "processing",
+            "LOADING": "loading_model",
+            "IDLE": "ready"
+        }
+        key = status_key_map.get(self.state, "processing")
+        if key == "ready":
+            status_text = self.i18n.t("ready", self.engine.model_size)
+        else:
+            status_text = self.i18n.t(key)
+
         state_data = {
             "state": self.state,
+            "status_text": status_text,
+            "ui_language": self.config.get("ui_language", "en"),
             "time_str": getattr(self, "last_time_str", "00:00"),
             "model": self.engine.model_size,
             "level": getattr(self.audio, "audio_level", 0.0),
@@ -152,6 +169,7 @@ class DictationDaemon:
             "autopause_enabled": self.config.get("auto_pause_media", True),
             "realtime_enabled": self.config.get("realtime_mode", True),
             "hide_bubble": self.config.get("hide_bubble", False),
+            "restore_window_focus": self.config.get("restore_window_focus", False),
             "send_status": getattr(self, "send_status", "idle"),
             "start_time": self.start_time,
             "pause_start_time": self.pause_start_time,
@@ -435,7 +453,14 @@ class DictationDaemon:
         full_text = text + suffix
         self.bubble.hide()
 
+        self.send_status = "pasting"
+        self.export_state()
+
         def _do_paste():
+            if self.config.get("restore_window_focus", False):
+                restore_window_focus(self.current_app_class, self.current_window_title)
+                time.sleep(0.15)
+
             wl_copy_path = shutil.which("wl-copy")
             if wl_copy_path:
                 subprocess.run([wl_copy_path], input=full_text, text=True)
@@ -449,6 +474,8 @@ class DictationDaemon:
                 if auto_send:
                     time.sleep(0.05)
                     subprocess.run(["ydotool", "key", "28:1", "28:0"])
+
+            self.send_status = "idle"
             self.reset_state()
             return False
 

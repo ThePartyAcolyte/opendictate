@@ -37,6 +37,7 @@ You can also enable the **AI Thinking Mode** from the settings. This allows the 
 
 * **100% Local and Private**: Uses Whisper models running entirely on your local machine.
 * **AI Integration (Optional)**: Transcribe and rewrite your text using Google Gemini (API).
+* **Smart Window Focus Restoration**: Remembers the target application where dictation started and restores focus before pasting, avoiding cross-app paste errors when switching windows during transcription.
 * **Smart Media Control**: Automatically pauses your music or podcasts when you start recording and resumes when finished.
 * **Per-App Profiles**: Define specific copy/paste behaviors for each program (useful for terminal, code editors, or browsers).
 * **Floating Bubble**: Immediate visual feedback while you speak.

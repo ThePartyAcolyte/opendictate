@@ -3,6 +3,7 @@ import Clutter from 'gi://Clutter';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
+import Meta from 'gi://Meta';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
@@ -16,6 +17,31 @@ class Waveform extends St.DrawingArea {
     _init() {
         super._init({ style_class: 'opendictate-waveform' });
         this._levels = new Array(30).fill(0);
+        this._isIndeterminate = false;
+        this._pulsePos = 0;
+        this._pulseDir = 1;
+    }
+
+    setIndeterminate(enable) {
+        if (this._isIndeterminate !== enable) {
+            this._isIndeterminate = enable;
+            this._pulsePos = 0;
+            this._pulseDir = 1;
+            this.queue_repaint();
+        }
+    }
+
+    updatePulse() {
+        if (!this._isIndeterminate) return;
+        this._pulsePos += 0.05 * this._pulseDir;
+        if (this._pulsePos >= 1.0) {
+            this._pulsePos = 1.0;
+            this._pulseDir = -1;
+        } else if (this._pulsePos <= 0.0) {
+            this._pulsePos = 0.0;
+            this._pulseDir = 1;
+        }
+        this.queue_repaint();
     }
 
     addLevel(level) {
@@ -28,6 +54,25 @@ class Waveform extends St.DrawingArea {
         let cr = this.get_context();
         let [width, height] = this.get_surface_size();
         
+        if (this._isIndeterminate) {
+            let pulseWidth = width * 0.4;
+            let startX = (width - pulseWidth) * this._pulsePos;
+            
+            cr.setSourceRGBA(1.0, 1.0, 1.0, 0.2);
+            cr.setLineWidth(3.0);
+            cr.setLineCap(1);
+            cr.moveTo(0, height / 2);
+            cr.lineTo(width, height / 2);
+            cr.stroke();
+
+            cr.setSourceRGBA(0.2, 0.6, 1.0, 0.95);
+            cr.setLineWidth(3.5);
+            cr.moveTo(startX, height / 2);
+            cr.lineTo(startX + pulseWidth, height / 2);
+            cr.stroke();
+            return;
+        }
+
         cr.setSourceRGBA(1.0, 1.0, 1.0, 0.7);
         cr.setLineWidth(2.0);
         cr.setLineCap(1); // ROUND
@@ -60,7 +105,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         // Gear Icon & Button for menu
         this._gearIcon = new St.Icon({
             icon_name: 'emblem-system-symbolic',
-            icon_size: 18,
+            icon_size: 16,
             style_class: 'opendictate-icon',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
@@ -85,7 +130,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         // Microphone/Record Icon (Main Button)
         this._micIcon = new St.Icon({
             icon_name: 'audio-input-microphone-symbolic',
-            icon_size: 30,
+            icon_size: 16,
             style_class: 'opendictate-icon',
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
@@ -130,7 +175,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         this._sendButton = new St.Button({
             child: new St.Icon({
                 icon_name: 'mail-send-symbolic',
-                icon_size: 18,
+                icon_size: 16,
                 style_class: 'opendictate-icon opendictate-send-icon',
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
@@ -154,7 +199,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         this._cancelButton = new St.Button({
             child: new St.Icon({
                 icon_name: 'process-stop-symbolic',
-                icon_size: 18,
+                icon_size: 16,
                 style_class: 'opendictate-icon opendictate-cancel-icon',
                 x_align: Clutter.ActorAlign.CENTER,
                 y_align: Clutter.ActorAlign.CENTER,
@@ -218,11 +263,17 @@ class OpenDictateIndicator extends PanelMenu.Button {
         
         this._stateData = null;
         this._timerId = null;
+        this._indeterminateTimerId = null;
+        this._targetWindow = null;
+        this._previousState = null;
         
         this._monitorStateFile();
     }
     
     _sendCommand(cmd) {
+        if (cmd === 'record') {
+            this._targetWindow = this._captureFocusWindow();
+        }
         try {
             let client = new Gio.SocketClient();
             let address = Gio.UnixSocketAddress.new(SOCKET_PATH);
@@ -277,9 +328,15 @@ class OpenDictateIndicator extends PanelMenu.Button {
         let icon = this._micIcon;
         
         if (state === "RECORDING") {
+            if (this._previousState !== "RECORDING") {
+                this._targetWindow = this._captureFocusWindow();
+            }
+            this._stopIndeterminateTimer();
+            this._waveform.setIndeterminate(false);
             icon.icon_name = 'media-record-symbolic';
             icon.add_style_class_name('recording');
             icon.remove_style_class_name('paused');
+            icon.remove_style_class_name('processing');
             
             this._waveform.show();
             if (stateData.level !== undefined) {
@@ -292,9 +349,12 @@ class OpenDictateIndicator extends PanelMenu.Button {
             this._startTimer();
             
         } else if (state === "PAUSED") {
+            this._stopIndeterminateTimer();
+            this._waveform.setIndeterminate(false);
             icon.icon_name = 'media-playback-pause-symbolic';
             icon.remove_style_class_name('recording');
             icon.add_style_class_name('paused');
+            icon.remove_style_class_name('processing');
             
             this._waveform.show();
             this._timeLabel.show();
@@ -304,25 +364,86 @@ class OpenDictateIndicator extends PanelMenu.Button {
             this._updateTimeDisplay();
             
         } else if (state === "LOADING" || state === "PREVIEW" || state === "CLEANING" || state === "PROCESSING" || state === "TRANSCRIBING") {
-            icon.icon_name = 'view-refresh-symbolic';
+            icon.icon_name = 'audio-input-microphone-symbolic';
             icon.remove_style_class_name('recording');
             icon.remove_style_class_name('paused');
+            icon.add_style_class_name('processing');
             
-            this._waveform.hide();
-            this._timeLabel.hide();
+            this._waveform.setIndeterminate(true);
+            this._waveform.show();
+            this._startIndeterminateTimer();
+            
+            let statusText = stateData.status_text;
+            if (!statusText) {
+                let lang = stateData.ui_language || "en";
+                if (lang === "es") {
+                    statusText = state === "TRANSCRIBING" ? "Transcribiendo..." : (state === "CLEANING" ? "Limpiando..." : "Procesando...");
+                } else if (lang === "de") {
+                    statusText = state === "TRANSCRIBING" ? "Transkribieren..." : (state === "CLEANING" ? "Text bereinigen..." : "Verarbeitung...");
+                } else if (lang === "fr") {
+                    statusText = state === "TRANSCRIBING" ? "Transcription..." : (state === "CLEANING" ? "Nettoyage..." : "Traitement...");
+                } else {
+                    statusText = state === "TRANSCRIBING" ? "Transcribing..." : (state === "CLEANING" ? "Cleaning text..." : "Processing...");
+                }
+            }
+            this._timeLabel.set_text(statusText);
+            this._timeLabel.show();
             this._sendButton.hide();
             this._cancelButton.show();
             this._stopTimer();
         } else {
+            this._stopIndeterminateTimer();
+            this._waveform.setIndeterminate(false);
             icon.icon_name = 'audio-input-microphone-symbolic';
             icon.remove_style_class_name('recording');
             icon.remove_style_class_name('paused');
+            icon.remove_style_class_name('processing');
             
             this._waveform.hide();
             this._timeLabel.hide();
             this._sendButton.hide();
             this._cancelButton.hide();
             this._stopTimer();
+        }
+
+        if ((stateData.send_status === "pasting" || (this._previousState && this._previousState !== "IDLE" && state === "IDLE")) && stateData.restore_window_focus) {
+            if (this._targetWindow) {
+                try {
+                    this._targetWindow.activate(global.get_current_time());
+                } catch (e) {
+                    console.error(`OpenDictate: Failed to activate target window: ${e.message}`);
+                }
+                this._targetWindow = null;
+            }
+        }
+
+        this._previousState = state;
+    }
+
+    _captureFocusWindow() {
+        try {
+            let win = global.display ? global.display.focus_window : null;
+            if (win && win.get_window_type() === Meta.WindowType.NORMAL) {
+                return win;
+            }
+            let workspace = global.workspace_manager ? global.workspace_manager.get_active_workspace() : null;
+            if (workspace) {
+                let windows = workspace.list_windows();
+                for (let w of windows) {
+                    if (w.get_window_type() === Meta.WindowType.NORMAL && w.has_focus()) {
+                        return w;
+                    }
+                }
+                for (let w of windows) {
+                    if (w.get_window_type() === Meta.WindowType.NORMAL && !w.is_hidden()) {
+                        return w;
+                    }
+                }
+            }
+            return win;
+        } catch (e) {
+            console.error(`OpenDictate: Error capturing window: ${e.message}`);
+            return null;
         }
     }
     
@@ -362,6 +483,22 @@ class OpenDictateIndicator extends PanelMenu.Button {
             this._timerId = null;
         }
     }
+
+    _startIndeterminateTimer() {
+        if (!this._indeterminateTimerId) {
+            this._indeterminateTimerId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 40, () => {
+                this._waveform.updatePulse();
+                return GLib.SOURCE_CONTINUE;
+            });
+        }
+    }
+    
+    _stopIndeterminateTimer() {
+        if (this._indeterminateTimerId) {
+            GLib.Source.remove(this._indeterminateTimerId);
+            this._indeterminateTimerId = null;
+        }
+    }
     
     _readStateFile() {
         let file = Gio.File.new_for_path(STATE_FILE);
@@ -393,6 +530,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
     
     destroy() {
         this._stopTimer();
+        this._stopIndeterminateTimer();
         if (this._monitor) {
             this._monitor.cancel();
             this._monitor = null;

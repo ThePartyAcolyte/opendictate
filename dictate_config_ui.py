@@ -111,6 +111,15 @@ class ConfigWindow(Gtk.Window):
         switch_box7.pack_start(lbl_notifications, False, False, 0)
         switch_box7.pack_start(self.notifications_switch, False, False, 0)
         general_box.pack_start(switch_box7, False, False, 0)
+
+        switch_box8 = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        lbl_restore_focus = Gtk.Label(label=self.i18n.t("lbl_restore_focus"))
+        self.restore_focus_switch = Gtk.Switch()
+        self.restore_focus_switch.set_active(self.config.get("restore_window_focus", False))
+        self.restore_focus_switch.connect("notify::active", self.auto_save)
+        switch_box8.pack_start(lbl_restore_focus, False, False, 0)
+        switch_box8.pack_start(self.restore_focus_switch, False, False, 0)
+        general_box.pack_start(switch_box8, False, False, 0)
         
         # Tab 2: IA / LLM
         ia_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -434,6 +443,8 @@ class ConfigWindow(Gtk.Window):
             self.config["realtime_mode"] = self.realtime_switch.get_active()
         if hasattr(self, 'notifications_switch'):
             self.config["show_notifications"] = self.notifications_switch.get_active()
+        if hasattr(self, 'restore_focus_switch'):
+            self.config["restore_window_focus"] = self.restore_focus_switch.get_active()
 
         if hasattr(self, 'use_appindicator_check'):
             self.config["use_appindicator"] = self.use_appindicator_check.get_active()

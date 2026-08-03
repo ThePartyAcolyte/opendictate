@@ -16,7 +16,8 @@ CONFIG_PATH = os.path.expanduser("~/.config/dictate-whisper/config.json")
 DEFAULT_CONFIG: Dict[str, Any] = {
     "api_key": "",
     "llm_enabled": False,
-    "model": "gemma-4"
+    "model": "gemma-4",
+    "restore_window_focus": False
 }
 
 

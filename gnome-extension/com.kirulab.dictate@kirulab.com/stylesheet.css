@@ -6,8 +6,8 @@
 
 .opendictate-action-button {
     border-radius: 9999px;
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     padding: 0px !important;
     margin: 0px 1px;
     background-color: rgba(255, 255, 255, 0.18);
@@ -37,22 +37,29 @@
     color: #f6d32d; /* Yellow GNOME color */
 }
 
+.processing {
+    color: #3584e4; /* Blue GNOME color */
+}
+
 .opendictate-waveform {
     width: 60px;
-    height: 24px;
+    height: 20px;
     margin: 0 2px;
 }
 
 .opendictate-time-label {
     font-weight: bold;
     font-feature-settings: "tnum";
-    margin: 0 2px;
+    margin: 0 3px;
 }
 
 .opendictate-send-icon {
     color: #57e389; /* Green GNOME color */
+    margin-left: -1px !important;
+    margin-top: 1px !important;
 }
 
 .opendictate-cancel-icon {
     color: #ed333b; /* Red GNOME color */
 }
+

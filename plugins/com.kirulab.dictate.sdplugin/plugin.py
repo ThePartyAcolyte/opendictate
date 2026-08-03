@@ -119,18 +119,17 @@ async def watch_state(ws):
         # Title formatting
         title = ""
         global force_update
+        status_text = state_data.get("status_text")
         if current_state == "RECORDING":
             title = current_time
         elif current_state == "PAUSED":
             title = f"Paused\n{current_time}"
-        elif current_state == "TRANSCRIBING":
-            title = "Thinking..."
-        elif current_state == "CLEANING":
-            title = "AI Cleanup"
+        elif current_state in ["TRANSCRIBING", "CLEANING", "PROCESSING"]:
+            title = status_text if status_text else ("Thinking..." if current_state == "TRANSCRIBING" else "AI Cleanup")
         elif current_state == "IDLE":
             title = model
         elif current_state == "LOADING":
-            title = f"Loading\n{model}"
+            title = status_text if status_text else f"Loading\n{model}"
         else:
             title = "Offline"
             
@@ -181,6 +180,7 @@ async def watch_state(ws):
                 
             # Update Send and Cancel states
             send_usable = 1 if current_state in ["RECORDING", "PAUSED"] else 0
+            cancel_usable = 1 if current_state in ["RECORDING", "PAUSED", "TRANSCRIBING", "CLEANING", "PROCESSING", "LOADING", "PREVIEW"] else 0
             for ctx in active_contexts["send"].copy():
                 await ws.send(json.dumps({
                     "event": "setState",
@@ -197,7 +197,7 @@ async def watch_state(ws):
                 await ws.send(json.dumps({
                     "event": "setState",
                     "context": ctx,
-                    "payload": {"state": send_usable}
+                    "payload": {"state": cancel_usable}
                 }))
                 
             for ctx in active_contexts["bubble"].copy():
@@ -311,18 +311,17 @@ async def connect_streamdeck():
                     })))
                 elif act_suffix == "monitor":
                     title = ""
+                    status_text = state_data.get("status_text")
                     if current_state == "RECORDING":
                         title = current_time
                     elif current_state == "PAUSED":
                         title = f"Paused\n{current_time}"
-                    elif current_state == "TRANSCRIBING":
-                        title = "Thinking..."
-                    elif current_state == "CLEANING":
-                        title = "AI Cleanup"
+                    elif current_state in ["TRANSCRIBING", "CLEANING", "PROCESSING"]:
+                        title = status_text if status_text else ("Thinking..." if current_state == "TRANSCRIBING" else "AI Cleanup")
                     elif current_state == "IDLE":
                         title = model
                     elif current_state == "LOADING":
-                        title = f"Loading\n{model}"
+                        title = status_text if status_text else f"Loading\n{model}"
                     else:
                         title = "Offline"
                         
@@ -382,7 +381,7 @@ async def connect_streamdeck():
                         "payload": {"state": send_usable}
                     })))
                 elif act_suffix == "cancel":
-                    cancel_usable = 1 if current_state in ["RECORDING", "PAUSED", "TRANSCRIBING"] else 0
+                    cancel_usable = 1 if current_state in ["RECORDING", "PAUSED", "TRANSCRIBING", "CLEANING", "PROCESSING", "LOADING", "PREVIEW"] else 0
                     asyncio.create_task(ws.send(json.dumps({
                         "event": "setState",
                         "context": context,

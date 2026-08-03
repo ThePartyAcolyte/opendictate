@@ -9,7 +9,7 @@ echo "🚀 Iniciando instalación de OpenDictate..."
 
 echo "📦 Instalando dependencias de sistema (requiere sudo)..."
 sudo apt update
-sudo apt install -y gir1.2-ayatanaappindicator3-0.1 wl-clipboard ydotool python3-dev python3-cairo libcairo2-dev libgirepository1.0-dev
+sudo apt install -y gir1.2-ayatanaappindicator3-0.1 wl-clipboard ydotool wmctrl xdotool python3-dev python3-cairo libcairo2-dev libgirepository1.0-dev
 
 echo "📁 Creando directorios..."
 mkdir -p "$INSTALL_DIR"
