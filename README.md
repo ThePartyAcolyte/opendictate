@@ -119,6 +119,7 @@ OpenDictate includes a full plugin for **OpenDeck**, perfect for having physical
 ### Available Actions in OpenDeck
 
 * **Record**: A dynamic button that changes color and state depending on whether you are recording, paused, or idle.
+* **Record Control (Encoder)**: An encoder (rotary dial) action to control recording (Push to Record/Pause, Turn Right to Send, Turn Left to Cancel).
 * **Cancel**: Cancels the ongoing recording.
 * **Send**: Finishes the recording and pastes the text (uses AI if enabled by the toggle).
 * **Monitor**: Empty button used to monitor daemon status.

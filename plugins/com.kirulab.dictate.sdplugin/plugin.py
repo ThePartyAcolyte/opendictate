@@ -36,6 +36,7 @@ for i in range(len(sys.argv)):
 active_contexts = {
     "monitor": set(),
     "record": set(),
+    "record_encoder": set(),
     "send": set(),
     "preview": set(),
     "cancel": set(),
@@ -45,6 +46,8 @@ active_contexts = {
     "bubble": set(),
     "realtime": set()
 }
+
+encoder_accumulators = {}
 
 force_update = False
 
@@ -144,7 +147,7 @@ async def watch_state(ws):
         
         if changed:
             # Update Record buttons (only when state changes)
-            for ctx in active_contexts["record"].copy():
+            for ctx in active_contexts["record"].union(active_contexts["record_encoder"]):
                 await ws.send(json.dumps({
                     "event": "setState",
                     "context": ctx,
@@ -253,6 +256,7 @@ async def connect_streamdeck():
             event = data.get("event")
             context = data.get("context")
             action = data.get("action")
+            payload = data.get("payload", {})
             
             if event == "willAppear":
                 global force_update
@@ -262,6 +266,8 @@ async def connect_streamdeck():
                     active_contexts["monitor"].add(context)
                 elif act_suffix == "record":
                     active_contexts["record"].add(context)
+                elif act_suffix == "record_encoder":
+                    active_contexts["record_encoder"].add(context)
                 elif act_suffix == "send":
                     active_contexts["send"].add(context)
 
@@ -298,7 +304,7 @@ async def connect_streamdeck():
                 elif current_state == "PAUSED":
                     state_idx = 2
                     
-                if act_suffix == "record":
+                if act_suffix in ["record", "record_encoder"]:
                     asyncio.create_task(ws.send(json.dumps({
                         "event": "setState",
                         "context": context,
@@ -394,6 +400,8 @@ async def connect_streamdeck():
                     active_contexts["monitor"].remove(context)
                 elif act_suffix == "record" and context in active_contexts["record"]:
                     active_contexts["record"].remove(context)
+                elif act_suffix == "record_encoder" and context in active_contexts["record_encoder"]:
+                    active_contexts["record_encoder"].remove(context)
                 elif act_suffix == "send" and context in active_contexts["send"]:
                     active_contexts["send"].remove(context)
                 elif act_suffix == "preview" and context in active_contexts["preview"]:
@@ -411,10 +419,10 @@ async def connect_streamdeck():
                 elif act_suffix == "toggle_realtime" and context in active_contexts["realtime"]:
                     active_contexts["realtime"].remove(context)
 
-            elif event == "keyUp":
+            elif event in ["keyUp", "dialUp"]:
                 act_suffix = action.split(".")[-1]
-                logging.debug(f"keyUp received for {act_suffix}")
-                if act_suffix == "record":
+                logging.debug(f"{event} received for {act_suffix}")
+                if act_suffix in ["record", "record_encoder"]:
                     state_data = get_daemon_state()
                     logging.debug(f"Current daemon state: {state_data.get('state')}")
                     if state_data.get("state") == "RECORDING":
@@ -439,6 +447,26 @@ async def connect_streamdeck():
                     subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--toggle-bubble"])
                 elif act_suffix == "toggle_realtime":
                     subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--toggle-realtime"])
+
+            elif event == "dialRotate":
+                act_suffix = action.split(".")[-1]
+                ticks = payload.get("ticks", 1)
+                if act_suffix == "record_encoder":
+                    now = time.time()
+                    state = encoder_accumulators.setdefault(context, {"ticks": 0, "last_time": 0.0})
+                    
+                    if now - state["last_time"] > 0.5:
+                        state["ticks"] = 0
+                        
+                    state["ticks"] += ticks
+                    state["last_time"] = now
+                    
+                    if state["ticks"] >= 3:
+                        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--send"])
+                        state["ticks"] = 0
+                    elif state["ticks"] <= -3:
+                        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--cancel"])
+                        state["ticks"] = 0
 
 if __name__ == "__main__":
     if port:

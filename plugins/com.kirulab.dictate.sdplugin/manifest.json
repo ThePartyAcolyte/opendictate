@@ -30,6 +30,32 @@
       ]
     },
     {
+      "Icon": "icons/record",
+      "Name": "Record Control (Encoder)",
+      "UUID": "com.kirulab.dictate.record_encoder",
+      "Controllers": ["Encoder"],
+      "Encoder": {
+        "TriggerDescription": {
+          "Rotate": "Right: Send / Left: Cancel",
+          "Push": "Record / Pause"
+        }
+      },
+      "States": [
+        {
+          "Name": "Idle",
+          "Image": "icons/record"
+        },
+        {
+          "Name": "Recording",
+          "Image": "icons/record_pause"
+        },
+        {
+          "Name": "Paused",
+          "Image": "icons/record_resume"
+        }
+      ]
+    },
+    {
       "Icon": "icons/send_enabled",
       "Name": "Send",
       "UUID": "com.kirulab.dictate.send",
