@@ -1,32 +1,37 @@
 """
 Floating GTK OSD text bubble window for OpenDictate.
 
-Displays live transcript preview, audio level bar, timer, and quick action buttons.
+Displays live transcript preview with Cairo rendering, typing animation, and minimalist design.
 """
 
+import math
+import cairo
 import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
-from typing import Dict, Any, Callable, Optional
+from typing import Dict, Any, List, Optional
 
 
 class BubbleWindow:
-    """GTK TopLevel transparent overlay bubble window."""
+    """GTK TopLevel transparent overlay bubble window with Cairo background rendering."""
 
     def __init__(
         self,
         config: Dict[str, Any],
-        i18n: Any,
-        on_cancel: Callable[[], None],
-        on_copy: Callable[[], None],
-        on_finish: Callable[[], None]
+        i18n: Any
     ) -> None:
         """Initialize GTK window components, CSS styles, and event signals."""
         self.config = config
         self.i18n = i18n
-        self.on_cancel = on_cancel
-        self.on_copy = on_copy
-        self.on_finish = on_finish
+
+        # Animation & Streaming State
+        self.displayed_text: str = ""
+        self.target_text: str = ""
+        self.queue_words: List[str] = []
+        self.cursor_visible: bool = True
+        self.cursor_active: bool = False
+        self.anim_timer_id: Optional[int] = None
+        self.blink_timer_id: Optional[int] = None
 
         self.window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
         self.window.set_decorated(False)
@@ -57,90 +62,75 @@ class BubbleWindow:
             self.window.set_visual(visual)
         self.window.set_app_paintable(True)
 
-        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
         self.box.set_name("bubble-window")
 
-        self.status_icon = Gtk.Label(label="⚪")
-        self.status_icon.set_name("status-icon")
-        self.status_icon.set_halign(Gtk.Align.CENTER)
-
-        self.time_label = Gtk.Label(label="00:00")
-        self.time_label.set_name("time-label")
-        self.time_label.set_halign(Gtk.Align.CENTER)
-
-        self.level_bar = Gtk.LevelBar()
-        self.level_bar.set_name("level-bar")
-        self.level_bar.set_min_value(0.0)
-        self.level_bar.set_max_value(1.0)
-        self.level_bar.set_size_request(150, 8)
-
         self.text_buffer = Gtk.TextBuffer()
+        self.cursor_tag = self.text_buffer.create_tag("cursor-tag", foreground_rgba=Gdk.RGBA(1.0, 1.0, 1.0, 1.0))
         self.text_view = Gtk.TextView(buffer=self.text_buffer)
         self.text_view.set_wrap_mode(Gtk.WrapMode.WORD)
         self.text_view.set_editable(False)
         self.text_view.set_cursor_visible(False)
         self.text_view.set_name("preview-text")
+        self.text_view.set_left_margin(12)
+        self.text_view.set_right_margin(12)
+        self.text_view.set_top_margin(10)
+        self.text_view.set_bottom_margin(10)
 
         self.text_view_scroll = Gtk.ScrolledWindow()
         self.text_view_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        self.text_view_scroll.set_min_content_height(100)
-        self.text_view_scroll.set_min_content_width(300)
+        self.text_view_scroll.set_min_content_height(80)
+        self.text_view_scroll.set_max_content_height(320)
+        self.text_view_scroll.set_propagate_natural_height(True)
+        self.text_view_scroll.set_min_content_width(350)
         self.text_view_scroll.add(self.text_view)
 
-        self.button_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
-        self.button_box.set_halign(Gtk.Align.CENTER)
+        self.level_bar = Gtk.LevelBar()
+        self.level_bar.set_name("level-bar")
+        self.level_bar.set_min_value(0.0)
+        self.level_bar.set_max_value(1.0)
+        self.level_bar.set_size_request(-1, 2)
+        self.level_bar.set_margin_top(5)
+        self.level_bar.set_margin_bottom(6)
+        self.level_bar.set_margin_left(12)
+        self.level_bar.set_margin_right(12)
 
-        self.btn_close = Gtk.Button(label="❌")
-        self.btn_close.set_tooltip_text(self.i18n.t("close"))
-        self.btn_close.connect("clicked", lambda w: self.on_cancel())
-
-        self.btn_copy = Gtk.Button(label="📋")
-        self.btn_copy.set_tooltip_text(self.i18n.t("copy_clipboard"))
-        self.btn_copy.connect("clicked", lambda w: self.on_copy())
-
-        self.btn_insert = Gtk.Button(label="📝")
-        self.btn_insert.set_tooltip_text(self.i18n.t("insert_text"))
-        self.btn_insert.connect("clicked", lambda w: self.on_finish())
-
-        self.button_box.pack_start(self.btn_close, False, False, 0)
-        self.button_box.pack_start(self.btn_copy, False, False, 0)
-        self.button_box.pack_start(self.btn_insert, False, False, 0)
-
-        self.box.pack_start(self.status_icon, False, False, 0)
         self.box.pack_start(self.text_view_scroll, True, True, 0)
-        self.box.pack_start(self.time_label, False, False, 0)
         self.box.pack_start(self.level_bar, False, False, 0)
-        self.box.pack_start(self.button_box, False, False, 0)
 
         self.window.add(self.box)
 
         css_provider = Gtk.CssProvider()
         css = b"""
         #bubble-window {
-            background-color: rgba(30, 30, 30, 0.95);
-            padding: 20px 30px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
+            background-color: transparent;
+            padding: 5px;
         }
-        #status-icon { font-size: 36px; }
-        #time-label { color: #aaaaaa; font-size: 14px; }
         #preview-text, textview text, textview {
             background-color: transparent;
-            color: white;
-            font-size: 16px;
+            color: rgba(255, 255, 255, 0.95);
+            font-size: 18px;
+            font-family: sans-serif;
         }
         scrolledwindow { background-color: transparent; }
-        #level-bar block.filled { background-color: #4CAF50; border-radius: 2px; }
-        #level-bar.transcribing block.filled { background-color: #2196F3; }
-        #level-bar.cleaning block.filled { background-color: #9C27B0; }
-        button {
-            padding: 8px 12px;
-            border-radius: 6px;
-            background-color: rgba(255,255,255,0.1);
-            color: white;
-            border: none;
+        
+        #level-bar { 
+            background-color: transparent;
+            min-height: 2px;
         }
-        button:hover { background-color: rgba(255,255,255,0.2); }
+        #level-bar trough {
+            background-color: transparent;
+        }
+        #level-bar block.filled { 
+            background-color: rgba(100, 200, 255, 0.85); 
+            border-radius: 2px; 
+            box-shadow: 0 0 8px 1px rgba(100, 200, 255, 0.6);
+        }
+        #level-bar.transcribing block.filled { 
+            background-color: rgba(156, 39, 176, 0.85);
+            box-shadow: 0 0 8px 1px rgba(156, 39, 176, 0.6);
+        }
+        
         scrollbar, scrollbar trough, scrollbar slider {
             min-width: 0px; min-height: 0px;
             background-color: transparent; background: transparent; border: none;
@@ -163,57 +153,159 @@ class BubbleWindow:
         return False
 
     def _on_draw(self, widget: Gtk.Widget, cr: Any) -> bool:
-        """Clear window background for cairo alpha transparency."""
+        """Draw rounded dark background using Cairo to prevent transparency issues."""
+        alloc = widget.get_allocation()
+        w = float(alloc.width)
+        h = float(alloc.height)
+        radius = 14.0
+
+        # Clear background completely
         cr.set_source_rgba(0, 0, 0, 0)
-        cr.set_operator(1)
+        cr.set_operator(cairo.OPERATOR_SOURCE)
         cr.paint()
+
+        # Draw rounded box
+        cr.set_operator(cairo.OPERATOR_OVER)
+        cr.new_sub_path()
+        cr.arc(w - radius, radius, radius, -math.pi / 2, 0)
+        cr.arc(w - radius, h - radius, radius, 0, math.pi / 2)
+        cr.arc(radius, h - radius, radius, math.pi / 2, math.pi)
+        cr.arc(radius, radius, radius, math.pi, 3 * math.pi / 2)
+        cr.close_path()
+
+        # Fill background with dark 92% opaque color
+        cr.set_source_rgba(0.08, 0.08, 0.08, 0.92)
+        cr.fill_preserve()
+
+        # Draw subtle top border/glow
+        cr.set_source_rgba(1.0, 1.0, 1.0, 0.08)
+        cr.set_line_width(1.0)
+        cr.stroke()
+
         return False
 
-    def show_recording_state(self) -> None:
-        """Configure layout for RECORDING or PAUSED state."""
-        self.window.show_all()
-        self.status_icon.show()
-        self.time_label.show()
-        self.level_bar.show()
-        self.text_view_scroll.hide()
-        self.button_box.show_all()
-        self.btn_copy.hide()
-        self.btn_insert.hide()
-        self.btn_close.show()
+    def _start_timers(self) -> None:
+        """Start cursor blinking and word streaming animation timers."""
+        self.cursor_active = True
+        self.cursor_visible = True
+        self.cursor_tag.set_property("foreground-rgba", Gdk.RGBA(1.0, 1.0, 1.0, 1.0))
+        if not self.blink_timer_id:
+            self.blink_timer_id = GLib.timeout_add(450, self._blink_cursor)
+        if not self.anim_timer_id:
+            self.anim_timer_id = GLib.timeout_add(70, self._animate_step)
 
-    def show_processing_state(self) -> None:
-        """Configure layout for TRANSCRIBING or CLEANING processing state with cancel button."""
-        self.window.show_all()
-        self.status_icon.show()
-        self.time_label.show()
-        self.level_bar.show()
-        self.text_view_scroll.hide()
-        self.button_box.show_all()
-        self.btn_copy.hide()
-        self.btn_insert.hide()
-        self.btn_close.show()
+    def _stop_timers(self) -> None:
+        """Stop animation timers and remove blinking cursor."""
+        self.cursor_active = False
+        if self.blink_timer_id:
+            GLib.source_remove(self.blink_timer_id)
+            self.blink_timer_id = None
+        if self.anim_timer_id:
+            GLib.source_remove(self.anim_timer_id)
+            self.anim_timer_id = None
 
-    def show_preview_state(self, text: str) -> None:
-        """Configure window layout for PREVIEW state showing text buffer and action buttons."""
-        self.window.show_all()
-        self.status_icon.hide()
-        self.time_label.hide()
-        self.level_bar.hide()
+    def _blink_cursor(self) -> bool:
+        """Toggle cursor alpha transparency without altering buffer length."""
+        if not self.cursor_active:
+            return False
+        self.cursor_visible = not self.cursor_visible
+        alpha = 1.0 if self.cursor_visible else 0.0
+        self.cursor_tag.set_property("foreground-rgba", Gdk.RGBA(1.0, 1.0, 1.0, alpha))
+        return True
 
-        self.text_buffer.set_text(text)
-        self.text_view_scroll.show_all()
-        self.button_box.show_all()
-        self.btn_close.show()
-        self.btn_copy.show()
-        self.btn_insert.show()
+    def _animate_step(self) -> bool:
+        """Dequeue words and smoothly append to displayed text buffer."""
+        if not self.cursor_active:
+            return False
 
-    def set_live_text(self, text: str) -> None:
-        """Update preview text buffer and auto-scroll to end."""
-        self.text_buffer.set_text(text)
+        if self.queue_words:
+            next_word = self.queue_words.pop(0)
+            if self.displayed_text and not self.displayed_text.endswith(" ") and not next_word.startswith(" "):
+                self.displayed_text += " " + next_word
+            else:
+                self.displayed_text += next_word
+            self._update_text_buffer()
+        elif self.displayed_text != self.target_text and self.target_text.startswith(self.displayed_text):
+            remaining = self.target_text[len(self.displayed_text):]
+            words = [w for w in remaining.split(" ") if w]
+            if words:
+                word = words[0]
+                if self.displayed_text and not self.displayed_text.endswith(" "):
+                    self.displayed_text += " " + word
+                else:
+                    self.displayed_text += word
+                self._update_text_buffer()
+
+        return True
+
+    def _update_text_buffer(self) -> None:
+        """Update GTK text buffer with current text + permanent cursor character, applying transparency tag."""
+        if self.cursor_active:
+            text_to_show = self.displayed_text + " ▌"
+            self.text_buffer.set_text(text_to_show)
+            start_iter = self.text_buffer.get_iter_at_offset(len(text_to_show) - 2)
+            end_iter = self.text_buffer.get_end_iter()
+            self.text_buffer.apply_tag(self.cursor_tag, start_iter, end_iter)
+        else:
+            self.text_buffer.set_text(self.displayed_text)
+
         end_iter = self.text_buffer.get_end_iter()
         mark = self.text_buffer.create_mark(None, end_iter, False)
         self.text_view.scroll_mark_onscreen(mark)
 
+    def show_recording_state(self) -> None:
+        """Configure layout for RECORDING or PAUSED state."""
+        self.displayed_text = ""
+        self.target_text = ""
+        self.queue_words.clear()
+        self.text_buffer.set_text("")
+        self._start_timers()
+        self.level_bar.get_style_context().remove_class("transcribing")
+        self.level_bar.show()
+        self.window.show_all()
+
+    def show_processing_state(self) -> None:
+        """Configure layout for TRANSCRIBING processing state."""
+        self.level_bar.get_style_context().add_class("transcribing")
+        self.level_bar.show()
+        self.window.show_all()
+
+    def show_preview_state(self, text: str) -> None:
+        """Configure window layout for PREVIEW state showing final text buffer."""
+        self._stop_timers()
+        self.displayed_text = text
+        self.target_text = text
+        self.queue_words.clear()
+        self.text_buffer.set_text(text)
+        self.level_bar.hide()
+        self.window.show_all()
+
+    def set_live_text(self, text: str) -> None:
+        """Update target preview text and queue new words for smooth streaming animation."""
+        if text == self.target_text:
+            return
+
+        if text.startswith(self.displayed_text):
+            new_part = text[len(self.displayed_text):]
+            if self.target_text and text.startswith(self.target_text):
+                new_part = text[len(self.target_text):]
+            
+            new_words = [w for w in new_part.split(" ") if w]
+            self.queue_words.extend(new_words)
+        else:
+            # Re-sync if text was modified upstream
+            self.displayed_text = text
+            self.queue_words.clear()
+            self._update_text_buffer()
+
+        self.target_text = text
+        self._start_timers()
+
     def hide(self) -> None:
         """Hide the GTK bubble window."""
+        self._stop_timers()
+        self.displayed_text = ""
+        self.target_text = ""
+        self.queue_words.clear()
+        self.text_buffer.set_text("")
         self.window.hide()

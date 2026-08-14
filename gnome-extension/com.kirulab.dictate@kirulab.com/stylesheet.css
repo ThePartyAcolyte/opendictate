@@ -63,3 +63,8 @@
     color: #ed333b; /* Red GNOME color */
 }
 
+.offline {
+    color: #1a1a1a; /* Very dark grey for offline state */
+}
+
+

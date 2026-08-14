@@ -48,6 +48,68 @@ active_contexts = {
 }
 
 encoder_accumulators = {}
+encoder_settings = {}
+long_press_tasks = {}
+long_press_triggered = {}
+double_tap_tasks = {}
+double_tap_counts = {}
+
+def execute_primary_action():
+    state_data = get_daemon_state()
+    logging.debug(f"Executing primary action, daemon state: {state_data.get('state')}")
+    if state_data.get("state") == "RECORDING":
+        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--pause"])
+    else:
+        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--record"])
+
+async def execute_secondary_action(ws, action_type, profile, dev_id):
+    logging.debug(f"Executing secondary action: {action_type}")
+    if action_type == "settings":
+        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--settings"])
+    elif action_type == "switch_profile":
+        if profile:
+            await ws.send(json.dumps({
+                "event": "switchToProfile",
+                "context": pluginUUID,
+                "device": dev_id,
+                "payload": {
+                    "profile": profile,
+                    "page": profile
+                }
+            }))
+
+def update_encoder_settings(context, settings):
+    if not settings:
+        return
+    current = encoder_settings.get(context, {})
+    if not isinstance(current, dict):
+        current = {}
+    threshold = int(settings.get("threshold", current.get("threshold", 3)))
+    
+    sec_mode = settings.get("secondaryTriggerMode")
+    if not sec_mode:
+        old_lp = settings.get("longPressAction", current.get("secondary_action", "none"))
+        if old_lp == "none":
+            sec_mode = "disabled"
+            sec_action = "settings"
+        else:
+            sec_mode = "long_press"
+            sec_action = old_lp
+    else:
+        sec_action = settings.get("secondaryAction", current.get("secondary_action", "settings"))
+
+    target_profile = settings.get("targetProfile", current.get("target_profile", ""))
+    dt_window = float(settings.get("doubleTapWindow", current.get("double_tap_window", 300))) / 1000.0
+    lp_duration = float(settings.get("longPressDuration", current.get("long_press_duration", 1000))) / 1000.0
+    
+    encoder_settings[context] = {
+        "threshold": threshold,
+        "secondary_mode": sec_mode,
+        "secondary_action": sec_action,
+        "target_profile": target_profile,
+        "double_tap_window": dt_window,
+        "long_press_duration": lp_duration
+    }
 
 force_update = False
 
@@ -261,6 +323,10 @@ async def connect_streamdeck():
             if event == "willAppear":
                 global force_update
                 force_update = True
+                
+                settings = payload.get("settings", {})
+                update_encoder_settings(context, settings)
+
                 act_suffix = action.split(".")[-1]
                 if act_suffix == "monitor":
                     active_contexts["monitor"].add(context)
@@ -419,16 +485,114 @@ async def connect_streamdeck():
                 elif act_suffix == "toggle_realtime" and context in active_contexts["realtime"]:
                     active_contexts["realtime"].remove(context)
 
+                if context in long_press_tasks:
+                    long_press_tasks[context].cancel()
+                    del long_press_tasks[context]
+                if context in long_press_triggered:
+                    del long_press_triggered[context]
+                if context in double_tap_tasks:
+                    double_tap_tasks[context].cancel()
+                    del double_tap_tasks[context]
+                if context in double_tap_counts:
+                    del double_tap_counts[context]
+
+            elif event == "didReceiveSettings":
+                settings = payload.get("settings", {})
+                update_encoder_settings(context, settings)
+
+            elif event in ["keyDown", "dialDown"]:
+                act_suffix = action.split(".")[-1]
+                logging.debug(f"{event} received for {act_suffix}")
+                if act_suffix in ["record", "record_encoder"]:
+                    cfg = encoder_settings.get(context, {})
+                    if isinstance(cfg, dict):
+                        sec_mode = cfg.get("secondary_mode", "disabled")
+                        sec_action = cfg.get("secondary_action", "settings")
+                        target_prof = cfg.get("target_profile", "")
+                        lp_delay = cfg.get("long_press_duration", 1.0)
+                    else:
+                        sec_mode = "disabled"
+                        sec_action = "settings"
+                        target_prof = ""
+                        lp_delay = 1.0
+                    device_id = data.get("device", "")
+
+                    if sec_mode == "long_press":
+                        long_press_triggered[context] = False
+
+                        async def _long_press_timer(ctx=context, action_type=sec_action, profile=target_prof, duration=lp_delay, dev=device_id):
+                            try:
+                                await asyncio.sleep(duration)
+                                long_press_triggered[ctx] = True
+                                logging.debug(f"Long press triggered for {ctx}: {action_type}")
+                                await execute_secondary_action(ws, action_type, profile, dev)
+                            except asyncio.CancelledError:
+                                pass
+
+                        if context in long_press_tasks:
+                            long_press_tasks[context].cancel()
+                        long_press_tasks[context] = asyncio.create_task(_long_press_timer())
+
             elif event in ["keyUp", "dialUp"]:
                 act_suffix = action.split(".")[-1]
                 logging.debug(f"{event} received for {act_suffix}")
                 if act_suffix in ["record", "record_encoder"]:
-                    state_data = get_daemon_state()
-                    logging.debug(f"Current daemon state: {state_data.get('state')}")
-                    if state_data.get("state") == "RECORDING":
-                        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--pause"])
+                    cfg = encoder_settings.get(context, {})
+                    if isinstance(cfg, dict):
+                        sec_mode = cfg.get("secondary_mode", "disabled")
+                        sec_action = cfg.get("secondary_action", "settings")
+                        target_prof = cfg.get("target_profile", "")
+                        dt_win = cfg.get("double_tap_window", 0.3)
                     else:
-                        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--record"])
+                        sec_mode = "disabled"
+                        sec_action = "settings"
+                        target_prof = ""
+                        dt_win = 0.3
+                    device_id = data.get("device", "")
+
+                    if sec_mode == "long_press":
+                        if context in long_press_tasks:
+                            long_press_tasks[context].cancel()
+                            del long_press_tasks[context]
+
+                        if long_press_triggered.get(context, False):
+                            long_press_triggered[context] = False
+                            logging.debug(f"Long press handled for {context}, skipping short press")
+                        else:
+                            execute_primary_action()
+
+                    elif sec_mode == "double_tap":
+                        count = double_tap_counts.get(context, 0) + 1
+                        double_tap_counts[context] = count
+                        logging.debug(f"Double tap count for {context}: {count}")
+
+                        if count == 1:
+                            async def _double_tap_timer(ctx=context, window=dt_win):
+                                try:
+                                    await asyncio.sleep(window)
+                                    if double_tap_counts.get(ctx, 0) == 1:
+                                        logging.debug(f"Double tap window expired for {ctx}, executing primary action")
+                                        execute_primary_action()
+                                    double_tap_counts[ctx] = 0
+                                    if ctx in double_tap_tasks:
+                                        del double_tap_tasks[ctx]
+                                except asyncio.CancelledError:
+                                    pass
+
+                            if context in double_tap_tasks:
+                                double_tap_tasks[context].cancel()
+                            double_tap_tasks[context] = asyncio.create_task(_double_tap_timer())
+
+                        elif count >= 2:
+                            if context in double_tap_tasks:
+                                double_tap_tasks[context].cancel()
+                                del double_tap_tasks[context]
+                            double_tap_counts[context] = 0
+                            logging.debug(f"Double tap triggered for {context}: {sec_action}")
+                            asyncio.create_task(execute_secondary_action(ws, sec_action, target_prof, device_id))
+
+                    else:
+                        execute_primary_action()
                 elif act_suffix == "monitor":
                     subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--cycle-model"])
                 elif act_suffix == "send":
@@ -454,6 +618,8 @@ async def connect_streamdeck():
                 if act_suffix == "record_encoder":
                     now = time.time()
                     state = encoder_accumulators.setdefault(context, {"ticks": 0, "last_time": 0.0})
+                    cfg = encoder_settings.get(context, {})
+                    threshold = cfg.get("threshold", 3) if isinstance(cfg, dict) else 3
                     
                     if now - state["last_time"] > 0.5:
                         state["ticks"] = 0
@@ -461,10 +627,10 @@ async def connect_streamdeck():
                     state["ticks"] += ticks
                     state["last_time"] = now
                     
-                    if state["ticks"] >= 3:
+                    if state["ticks"] >= threshold:
                         subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--send"])
                         state["ticks"] = 0
-                    elif state["ticks"] <= -3:
+                    elif state["ticks"] <= -threshold:
                         subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--cancel"])
                         state["ticks"] = 0
 

@@ -64,6 +64,10 @@ TRANSLATIONS = {
         "lbl_restore_focus": "Restore window focus before pasting",
         "lbl_vad": "VAD Filter (Anti-noise)",
         
+        "lbl_chunk_stride": "Chunk Stride (sec):",
+        "lbl_chunk_overlap": "Chunk Overlap (sec):",
+        "lbl_chunk_tolerance": "Overlap Tolerance (sec):",
+        
         "btn_save_general": "Save General Settings",
         "btn_save_ai": "Save AI Settings",
         "btn_save_adv": "Save Advanced Settings",
@@ -158,6 +162,10 @@ TRANSLATIONS = {
         "lbl_notifications": "Mostrar Notificaciones del Sistema",
         "lbl_restore_focus": "Restaurar foco de ventana antes de pegar",
         "lbl_vad": "Filtro VAD (Anti-ruido)",
+        
+        "lbl_chunk_stride": "Avance del chunk (seg):",
+        "lbl_chunk_overlap": "Superposición del chunk (seg):",
+        "lbl_chunk_tolerance": "Tolerancia de superposición (seg):",
 
         "btn_save_general": "Guardar Configuración General",
         "btn_save_ai": "Guardar Configuración de IA",

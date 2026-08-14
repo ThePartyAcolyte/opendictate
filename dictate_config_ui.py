@@ -251,6 +251,33 @@ class ConfigWindow(Gtk.Window):
         ui_lang_box.pack_start(self.ui_lang_combo, False, False, 0)
         adv_box.pack_start(ui_lang_box, False, False, 0)
 
+        chunk_stride_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        lbl_chunk_stride = Gtk.Label(label=self.i18n.t("lbl_chunk_stride"))
+        self.chunk_stride_spin = Gtk.SpinButton.new_with_range(5.0, 30.0, 1.0)
+        self.chunk_stride_spin.set_value(self.config.get("chunk_stride", 10.0))
+        self.chunk_stride_spin.connect("value-changed", self.auto_save)
+        chunk_stride_box.pack_start(lbl_chunk_stride, False, False, 0)
+        chunk_stride_box.pack_start(self.chunk_stride_spin, False, False, 0)
+        adv_box.pack_start(chunk_stride_box, False, False, 0)
+
+        chunk_overlap_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        lbl_chunk_overlap = Gtk.Label(label=self.i18n.t("lbl_chunk_overlap"))
+        self.chunk_overlap_spin = Gtk.SpinButton.new_with_range(0.0, 10.0, 0.5)
+        self.chunk_overlap_spin.set_value(self.config.get("chunk_overlap", 2.0))
+        self.chunk_overlap_spin.connect("value-changed", self.auto_save)
+        chunk_overlap_box.pack_start(lbl_chunk_overlap, False, False, 0)
+        chunk_overlap_box.pack_start(self.chunk_overlap_spin, False, False, 0)
+        adv_box.pack_start(chunk_overlap_box, False, False, 0)
+
+        chunk_tol_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        lbl_chunk_tol = Gtk.Label(label=self.i18n.t("lbl_chunk_tolerance"))
+        self.chunk_tol_spin = Gtk.SpinButton.new_with_range(0.0, 2.0, 0.1)
+        self.chunk_tol_spin.set_value(self.config.get("chunk_tolerance", 0.4))
+        self.chunk_tol_spin.connect("value-changed", self.auto_save)
+        chunk_tol_box.pack_start(lbl_chunk_tol, False, False, 0)
+        chunk_tol_box.pack_start(self.chunk_tol_spin, False, False, 0)
+        adv_box.pack_start(chunk_tol_box, False, False, 0)
+
         vad_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         lbl_vad = Gtk.Label(label=self.i18n.t("lbl_vad"))
         self.vad_switch = Gtk.Switch()
@@ -417,6 +444,9 @@ class ConfigWindow(Gtk.Window):
             self.llm_thinking_switch.set_active(self.config.get("llm_thinking", False))
         
         if hasattr(self, 'vad_switch'):
+            self.chunk_stride_spin.set_value(self.config.get("chunk_stride", 10.0))
+            self.chunk_overlap_spin.set_value(self.config.get("chunk_overlap", 2.0))
+            self.chunk_tol_spin.set_value(self.config.get("chunk_tolerance", 0.4))
             self.vad_switch.set_active(self.config.get("vad_filter", False))
             self.lang_combo.set_active_id(self.config.get("language", "auto"))
             self.ui_lang_combo.set_active_id(self.config.get("ui_language", "en"))
@@ -482,6 +512,9 @@ Icon=audio-input-microphone
         
         # Guardar Configuración Avanzada si existen los widgets
         if hasattr(self, 'vad_switch'):
+            self.config["chunk_stride"] = float(self.chunk_stride_spin.get_value())
+            self.config["chunk_overlap"] = float(self.chunk_overlap_spin.get_value())
+            self.config["chunk_tolerance"] = float(self.chunk_tol_spin.get_value())
             self.config["vad_filter"] = self.vad_switch.get_active()
             self.config["language"] = self.lang_combo.get_active_id()
             self.config["ui_language"] = self.ui_lang_combo.get_active_id()

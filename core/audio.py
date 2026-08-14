@@ -10,7 +10,7 @@ import signal
 import struct
 import subprocess
 import logging
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 
 AUDIO_FILE_PCM = "/tmp/dictate_recording.wav.pcm"
 
@@ -39,12 +39,14 @@ class AudioRecorder:
     def process_stream_chunk(
         self,
         chunk_size: int = 1024,
+        is_paused: bool = False,
         on_level_update: Optional[Callable[[float], None]] = None
     ) -> bool:
         """Read a single chunk from the recording process output.
 
         Args:
             chunk_size: Bytes to read from stdout stream (default 1024).
+            is_paused: If True, read and discard stream data without storing it.
             on_level_update: Optional callback to notify calculated audio level (0.0 to 1.0).
 
         Returns:
@@ -56,6 +58,12 @@ class AudioRecorder:
         data = self.record_proc.stdout.read(chunk_size)
         if not data:
             return False
+
+        if is_paused:
+            self.audio_level = 0.0
+            if on_level_update:
+                on_level_update(0.0)
+            return True
 
         if self.audio_file_handle and not self.audio_file_handle.closed:
             self.audio_file_handle.write(data)

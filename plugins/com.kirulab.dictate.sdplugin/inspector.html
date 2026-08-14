@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>OpenDictate Encoder Settings</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            color: #ccc;
+            background-color: #2d2d2d;
+            margin: 0;
+            padding: 10px;
+        }
+        .sdpi-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .sdpi-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+        }
+        .sdpi-item-vertical {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .sdpi-item-label {
+            font-size: 13px;
+            font-weight: bold;
+        }
+        .sdpi-item-value input {
+            background-color: #3d3d3d;
+            color: white;
+            border: 1px solid #555;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .sdpi-item-value input[type="number"] {
+            width: 60px;
+            text-align: right;
+        }
+        .sdpi-item-value input[type="text"] {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .sdpi-item-value select {
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .help-text {
+            font-size: 11px;
+            color: #888;
+            margin-top: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="sdpi-wrapper">
+        <div class="sdpi-item">
+            <div class="sdpi-item-label">Rotational Threshold (Ticks)</div>
+            <div class="sdpi-item-value">
+                <input id="threshold" type="number" min="1" max="20" value="3" onchange="saveSettings()" />
+            </div>
+        </div>
+        <div class="help-text">
+            Número de 'ticks' o pasos físicos que el encoder debe rotar para emitir la acción (Enviar / Cancelar). Menor valor = más sensible.
+        </div>
+
+        <hr style="border: 0; border-top: 1px solid #444; width: 100%; margin: 4px 0;" />
+
+        <div class="sdpi-item-vertical">
+            <div class="sdpi-item-label">Modo de disparo secundario</div>
+            <div class="sdpi-item-value">
+                <select id="secondaryTriggerMode" onchange="toggleSecondaryOptions(); saveSettings();">
+                    <option value="disabled">Desactivado</option>
+                    <option value="double_tap">Doble Pulsación (Double Tap)</option>
+                    <option value="long_press">Mantener presionado (Long Press)</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="secondarySettingsContainer" class="sdpi-wrapper" style="display: none;">
+            <div class="sdpi-item-vertical">
+                <div class="sdpi-item-label">Acción secundaria</div>
+                <div class="sdpi-item-value">
+                    <select id="secondaryAction" onchange="toggleSecondaryOptions(); saveSettings();">
+                        <option value="settings">Abrir ventana de configuración</option>
+                        <option value="switch_profile">Cambiar perfil / página en OpenDeck</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="doubleTapContainer" class="sdpi-item-vertical" style="display: none;">
+                <div class="sdpi-item-label">Ventana de Doble Pulsación (ms)</div>
+                <div class="sdpi-item-value">
+                    <input id="doubleTapWindow" type="number" min="100" max="1000" step="50" value="300" onchange="saveSettings()" />
+                </div>
+                <div class="help-text">
+                    Tiempo máximo en milisegundos entre pulsaciones para activar la acción secundaria.
+                </div>
+            </div>
+
+            <div id="longPressContainer" class="sdpi-item-vertical" style="display: none;">
+                <div class="sdpi-item-label">Duración para Mantener Presionado (ms)</div>
+                <div class="sdpi-item-value">
+                    <input id="longPressDuration" type="number" min="300" max="3000" step="100" value="1000" onchange="saveSettings()" />
+                </div>
+                <div class="help-text">
+                    Tiempo en milisegundos que se debe mantener presionado el botón.
+                </div>
+            </div>
+
+            <div id="profileContainer" class="sdpi-item-vertical" style="display: none;">
+                <div class="sdpi-item-label">Nombre del Perfil o Página de destino</div>
+                <div class="sdpi-item-value">
+                    <input id="targetProfile" type="text" placeholder="Ej: VoiceNote 1" onchange="saveSettings()" />
+                </div>
+                <div class="help-text">
+                    Ingrese el nombre exacto de la página o perfil al que desea cambiar en OpenDeck.
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        var websocket = null;
+        var pluginAction = null;
+        var uuid = null;
+
+        function toggleSecondaryOptions() {
+            var mode = document.getElementById('secondaryTriggerMode').value;
+            var action = document.getElementById('secondaryAction').value;
+
+            var secContainer = document.getElementById('secondarySettingsContainer');
+            var dtContainer = document.getElementById('doubleTapContainer');
+            var lpContainer = document.getElementById('longPressContainer');
+            var profContainer = document.getElementById('profileContainer');
+
+            if (mode === 'disabled') {
+                secContainer.style.display = 'none';
+            } else {
+                secContainer.style.display = 'flex';
+                dtContainer.style.display = (mode === 'double_tap') ? 'flex' : 'none';
+                lpContainer.style.display = (mode === 'long_press') ? 'flex' : 'none';
+                profContainer.style.display = (action === 'switch_profile') ? 'flex' : 'none';
+            }
+        }
+
+        function loadSettings(settings) {
+            if (!settings) return;
+            if (settings.threshold !== undefined) {
+                document.getElementById('threshold').value = settings.threshold;
+            }
+
+            var mode = settings.secondaryTriggerMode;
+            if (mode === undefined) {
+                if (settings.longPressAction === 'none' || !settings.longPressAction) {
+                    mode = 'disabled';
+                } else {
+                    mode = 'long_press';
+                    document.getElementById('secondaryAction').value = settings.longPressAction;
+                }
+            }
+            document.getElementById('secondaryTriggerMode').value = mode;
+
+            if (settings.secondaryAction !== undefined) {
+                document.getElementById('secondaryAction').value = settings.secondaryAction;
+            }
+            if (settings.doubleTapWindow !== undefined) {
+                document.getElementById('doubleTapWindow').value = settings.doubleTapWindow;
+            }
+            if (settings.longPressDuration !== undefined) {
+                document.getElementById('longPressDuration').value = settings.longPressDuration;
+            }
+            if (settings.targetProfile !== undefined) {
+                document.getElementById('targetProfile').value = settings.targetProfile;
+            }
+            toggleSecondaryOptions();
+        }
+
+        function connectElgatoStreamDeckSocket(inPort, inPluginUUID, inRegisterEvent, inInfo, inActionInfo) {
+            uuid = inPluginUUID;
+            var actionInfo = JSON.parse(inActionInfo);
+            pluginAction = actionInfo.action;
+
+            loadSettings(actionInfo.payload.settings);
+
+            websocket = new WebSocket('ws://127.0.0.1:' + inPort);
+
+            websocket.onopen = function () {
+                var json = {
+                    "event": inRegisterEvent,
+                    "uuid": inPluginUUID
+                };
+                websocket.send(JSON.stringify(json));
+            };
+
+            websocket.onmessage = function (evt) {
+                var jsonObj = JSON.parse(evt.data);
+                if (jsonObj.event === "didReceiveSettings") {
+                    loadSettings(jsonObj.payload.settings);
+                }
+            };
+        }
+
+        function saveSettings() {
+            if (websocket) {
+                var thresholdValue = parseInt(document.getElementById('threshold').value, 10);
+                if (isNaN(thresholdValue) || thresholdValue < 1) {
+                    thresholdValue = 3;
+                }
+                var modeValue = document.getElementById('secondaryTriggerMode').value;
+                var actionValue = document.getElementById('secondaryAction').value;
+                var dtWindowValue = parseInt(document.getElementById('doubleTapWindow').value, 10) || 300;
+                var lpDurationValue = parseInt(document.getElementById('longPressDuration').value, 10) || 1000;
+                var targetProfileValue = document.getElementById('targetProfile').value.trim();
+
+                var json = {
+                    "event": "setSettings",
+                    "context": uuid,
+                    "payload": {
+                        "threshold": thresholdValue,
+                        "secondaryTriggerMode": modeValue,
+                        "secondaryAction": actionValue,
+                        "doubleTapWindow": dtWindowValue,
+                        "longPressDuration": lpDurationValue,
+                        "targetProfile": targetProfileValue,
+                        "longPressAction": (modeValue === 'long_press') ? actionValue : 'none'
+                    }
+                };
+                websocket.send(JSON.stringify(json));
+            }
+        }
+    </script>
+</body>
+</html>

@@ -19,6 +19,7 @@ import logging
 import threading
 import subprocess
 import numpy as np
+import difflib
 from typing import Dict, Any, Optional
 from logging.handlers import RotatingFileHandler
 
@@ -80,10 +81,7 @@ class DictationDaemon:
         # UI Components
         self.bubble = BubbleWindow(
             config=self.config,
-            i18n=self.i18n,
-            on_cancel=self.action_cancel,
-            on_copy=self.execute_copy,
-            on_finish=self.action_finish_normal
+            i18n=self.i18n
         )
         self.tray = TrayManager(
             config=self.config,
@@ -92,7 +90,7 @@ class DictationDaemon:
             on_toggle_auto_send=self.on_auto_send_toggled,
             on_toggle_ai=self.on_ai_toggled,
             on_open_config=self.open_config_window,
-            on_quit=Gtk.main_quit,
+            on_quit=self.quit_app,
             show_notification=self.show_notification
         )
 
@@ -108,9 +106,10 @@ class DictationDaemon:
             "toggle-autosend": lambda: GLib.idle_add(self.action_toggle_autosend),
             "toggle-realtime": lambda: GLib.idle_add(self.action_toggle_realtime),
             "toggle_realtime": lambda: GLib.idle_add(self.action_toggle_realtime),
+            "toggle-record-send": lambda: GLib.idle_add(self.action_record),
             "finish-normal": lambda: GLib.idle_add(self.action_finish_normal),
             "finish-ai": lambda: GLib.idle_add(self.action_finish_ai),
-            "quit": lambda: GLib.idle_add(Gtk.main_quit),
+            "quit": lambda: GLib.idle_add(self.quit_app),
             "settings": lambda: GLib.idle_add(self.open_config_window),
         }
         self.ipc = IPCServer(self.ipc_handlers)
@@ -181,6 +180,16 @@ class DictationDaemon:
         except Exception as e:
             logging.error(f"Error exporting state JSON: {e}")
 
+    def quit_app(self) -> None:
+        """Export OFFLINE state telemetry and exit application."""
+        try:
+            state_data = {"state": "OFFLINE", "status_text": "Offline"}
+            with open("/tmp/dictate_state.json", "w") as f:
+                json.dump(state_data, f)
+        except Exception as e:
+            logging.error(f"Error exporting OFFLINE state: {e}")
+        Gtk.main_quit()
+
     # -------------------------------------------------------------------------
     # Model Loading
     # -------------------------------------------------------------------------
@@ -188,8 +197,6 @@ class DictationDaemon:
         """Asynchronously load specified Whisper model size."""
         self.state = "LOADING"
         self.update_status(self.i18n.t("loading_model_param", size=size))
-        self.bubble.status_icon.set_text("⏳")
-
         def _loader():
             success = self.engine.load_model(size)
             if success:
@@ -222,16 +229,10 @@ class DictationDaemon:
         self.confirmed_text = ""
         self.last_transcribed_time = 0.0
 
-        if not self.config.get("hide_bubble", False):
+        if self.config.get("realtime_mode", True):
             self.bubble.show_recording_state()
 
-        self.bubble.status_icon.set_text("🔴")
-        self.bubble.time_label.set_text("00:00")
         self.bubble.level_bar.set_value(0.0)
-
-        ctx = self.bubble.level_bar.get_style_context()
-        ctx.remove_class("transcribing")
-        ctx.remove_class("cleaning")
 
         if self.timer_id:
             GLib.source_remove(self.timer_id)
@@ -247,6 +248,7 @@ class DictationDaemon:
         while self.state in ["RECORDING", "PAUSED"]:
             success = self.audio.process_stream_chunk(
                 chunk_size=1024,
+                is_paused=(self.state == "PAUSED"),
                 on_level_update=lambda lvl: (self.export_state(), GLib.idle_add(self.bubble.level_bar.set_value, lvl))
             )
             if not success:
@@ -254,11 +256,16 @@ class DictationDaemon:
 
     def _streaming_transcriber_loop(self) -> None:
         """Sliding-window transcription thread running during real-time recording."""
-        stride = 10.0
-        overlap = 2.0
+        stride = self.config.get("chunk_stride", 10.0)
+        overlap = self.config.get("chunk_overlap", 2.0)
+        tolerance = self.config.get("chunk_tolerance", 0.4)
         bytes_per_sec = 16000 * 2
 
         while self.state in ["RECORDING", "PAUSED"]:
+            if self.state == "PAUSED":
+                time.sleep(0.2)
+                continue
+
             current_time = len(self.audio.audio_buffer) / bytes_per_sec
             if current_time >= self.last_transcribed_time + stride:
                 chunk_start = max(0.0, self.last_transcribed_time - overlap)
@@ -276,23 +283,52 @@ class DictationDaemon:
                     audio_float32 = audio_int16.astype(np.float32) / 32768.0
 
                     prompt = self.confirmed_text[-200:] if self.confirmed_text else None
+                    t_start = time.perf_counter()
                     segments, _ = self.engine.transcribe_chunk(audio_float32, self.config, initial_prompt=prompt)
+                    t_transcribe = time.perf_counter() - t_start
 
                     chunk_text = ""
                     for segment in segments:
                         if segment.words:
                             for word in segment.words:
                                 abs_time = chunk_start + word.start
-                                if abs_time >= (self.last_transcribed_time - 0.4) and abs_time < (chunk_end - overlap):
+                                if abs_time < (chunk_end - overlap):
                                     chunk_text += word.word
                         else:
                             chunk_text += segment.text
+                    
+                    text_to_append = chunk_text
+                    if self.confirmed_text and chunk_text:
+                        search_len = min(len(self.confirmed_text), 150)
+                        suffix = self.confirmed_text[-search_len:].lower()
+                        prefix = chunk_text[:150].lower()
+                        
+                        matcher = difflib.SequenceMatcher(None, suffix, prefix)
+                        match = matcher.find_longest_match(0, len(suffix), 0, len(prefix))
+                        
+                        if match.size > 5 and match.b < 15:
+                            text_to_append = chunk_text[match.b + match.size:]
+                            logging.debug(f"Merge by string alignment (match size {match.size})")
+                        else:
+                            logging.debug("String alignment failed, using time-based fallback")
+                            text_to_append = ""
+                            for segment in segments:
+                                if segment.words:
+                                    for word in segment.words:
+                                        abs_time = chunk_start + word.start
+                                        if abs_time >= (self.last_transcribed_time - tolerance) and abs_time < (chunk_end - overlap):
+                                            text_to_append += word.word
+                                else:
+                                    text_to_append += segment.text
+                                    
+                    logging.info(f"Chunk transcribed in {t_transcribe:.2f}s | Audio len: {chunk_end - chunk_start:.2f}s | Appended chars: {len(text_to_append)}")
 
-                    if chunk_text:
-                        self.confirmed_text += chunk_text
+                    if text_to_append and self.state == "RECORDING":
+                        self.confirmed_text += text_to_append
                         GLib.idle_add(self.bubble.set_live_text, self.confirmed_text)
 
-                    self.last_transcribed_time = chunk_end - overlap
+                    if self.state == "RECORDING":
+                        self.last_transcribed_time = chunk_end - overlap
                 except Exception as e:
                     logging.error(f"Streaming transcription error: {e}", exc_info=True)
 
@@ -310,9 +346,6 @@ class DictationDaemon:
 
         if not self.config.get("hide_bubble", False):
             self.bubble.show_processing_state()
-
-        self.bubble.status_icon.set_text("🔄")
-
         ctx = self.bubble.level_bar.get_style_context()
         ctx.add_class("transcribing")
         self.bubble.level_bar.set_value(0.0)
@@ -343,7 +376,8 @@ class DictationDaemon:
                     full_text += segment.text
                 self.confirmed_text = full_text
             else:
-                overlap = 2.0
+                overlap = self.config.get("chunk_overlap", 2.0)
+                tolerance = self.config.get("chunk_tolerance", 0.4)
                 if current_audio_time > self.last_transcribed_time:
                     chunk_start = max(0.0, self.last_transcribed_time - overlap)
                     start_idx = int(chunk_start * bytes_per_sec)
@@ -355,7 +389,9 @@ class DictationDaemon:
                     audio_float32 = audio_int16.astype(np.float32) / 32768.0
 
                     prompt = self.confirmed_text[-200:] if self.confirmed_text else None
+                    t_start = time.perf_counter()
                     segments, _ = self.engine.transcribe_chunk(audio_float32, self.config, initial_prompt=prompt)
+                    t_transcribe = time.perf_counter() - t_start
 
                     chunk_text = ""
                     chunk_duration = current_audio_time - chunk_start
@@ -365,13 +401,36 @@ class DictationDaemon:
                             GLib.idle_add(self.bubble.level_bar.set_value, pct)
                         if segment.words:
                             for word in segment.words:
-                                abs_time = chunk_start + word.start
-                                if abs_time >= (self.last_transcribed_time - 0.4):
-                                    chunk_text += word.word
+                                chunk_text += word.word
                         else:
                             chunk_text += segment.text
 
-                    self.confirmed_text += chunk_text
+                    text_to_append = chunk_text
+                    if self.confirmed_text and chunk_text:
+                        search_len = min(len(self.confirmed_text), 150)
+                        suffix = self.confirmed_text[-search_len:].lower()
+                        prefix = chunk_text[:150].lower()
+                        
+                        matcher = difflib.SequenceMatcher(None, suffix, prefix)
+                        match = matcher.find_longest_match(0, len(suffix), 0, len(prefix))
+                        
+                        if match.size > 5 and match.b < 15:
+                            text_to_append = chunk_text[match.b + match.size:]
+                            logging.debug(f"Final chunk merge by string alignment (match size {match.size})")
+                        else:
+                            logging.debug("Final chunk string alignment failed, using time-based fallback")
+                            text_to_append = ""
+                            for segment in segments:
+                                if segment.words:
+                                    for word in segment.words:
+                                        abs_time = chunk_start + word.start
+                                        if abs_time >= (self.last_transcribed_time - tolerance):
+                                            text_to_append += word.word
+                                else:
+                                    text_to_append += segment.text
+                                    
+                    logging.info(f"Final chunk transcribed in {t_transcribe:.2f}s | Appended chars: {len(text_to_append)}")
+                    self.confirmed_text += text_to_append
 
             text = self.confirmed_text.strip()
             text = self.engine.parse_verbal_punctuation(text)
@@ -382,7 +441,6 @@ class DictationDaemon:
             GLib.idle_add(self.on_transcription_error, str(e))
 
     def on_transcription_error(self, err: str) -> None:
-        self.bubble.status_icon.set_text("❌")
         self.show_notification("Error: Transcripción", err, timeout=5000)
         GLib.timeout_add(700, self.reset_state)
 
@@ -408,7 +466,6 @@ class DictationDaemon:
         if use_llm and self.config.get("api_key", "").strip():
             self.state = "CLEANING"
             self.processing_start_time = time.time()
-            self.bubble.status_icon.set_text("✨")
 
             ctx = self.bubble.level_bar.get_style_context()
             ctx.remove_class("transcribing")
@@ -441,7 +498,6 @@ class DictationDaemon:
         if self.next_action == "PREVIEW":
             self.show_preview()
         else:
-            self.bubble.status_icon.set_text("✅")
             GLib.timeout_add(600, self.execute_paste, text, self.config.get("auto_send", False))
 
     def show_preview(self) -> None:
@@ -520,7 +576,6 @@ class DictationDaemon:
 
             mins, secs = int(elapsed) // 60, int(elapsed) % 60
             self.last_time_str = f"{mins:02d}:{secs:02d}"
-            self.bubble.time_label.set_text(self.last_time_str)
             self.export_state()
             return True
         elif self.state in ["TRANSCRIBING", "CLEANING"]:
@@ -528,7 +583,6 @@ class DictationDaemon:
                 elapsed = time.time() - self.processing_start_time
                 mins, secs = int(elapsed) // 60, int(elapsed) % 60
                 self.last_time_str = f"{mins:02d}:{secs:02d}"
-                self.bubble.time_label.set_text(self.last_time_str)
             self.export_state()
             return True
 
@@ -544,7 +598,6 @@ class DictationDaemon:
         elif self.state == "PAUSED":
             self.total_paused_time += time.time() - self.pause_start_time
             self.state = "RECORDING"
-            self.bubble.status_icon.set_text("🔴")
             self.export_state()
         elif self.state == "RECORDING":
             self.action_finish_normal()
@@ -553,7 +606,6 @@ class DictationDaemon:
         if self.state == "RECORDING":
             self.state = "PAUSED"
             self.pause_start_time = time.time()
-            self.bubble.status_icon.set_text("⏸️")
             self.export_state()
         elif self.state == "PAUSED":
             self.action_record()

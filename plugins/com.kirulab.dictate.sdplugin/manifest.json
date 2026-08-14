@@ -40,6 +40,7 @@
           "Push": "Record / Pause"
         }
       },
+      "PropertyInspectorPath": "inspector.html",
       "States": [
         {
           "Name": "Idle",

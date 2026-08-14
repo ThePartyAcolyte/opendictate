@@ -102,31 +102,6 @@ class OpenDictateIndicator extends PanelMenu.Button {
         
         this._box = new St.BoxLayout({ style_class: 'opendictate-box' });
         
-        // Gear Icon & Button for menu
-        this._gearIcon = new St.Icon({
-            icon_name: 'emblem-system-symbolic',
-            icon_size: 16,
-            style_class: 'opendictate-icon',
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._gearButton = new St.Button({
-            child: this._gearIcon,
-            style_class: 'opendictate-action-button',
-            reactive: true,
-            can_focus: true,
-            track_hover: true,
-            x_align: Clutter.ActorAlign.CENTER,
-            y_align: Clutter.ActorAlign.CENTER,
-        });
-        this._gearButton.connect('button-press-event', (actor, event) => {
-            if (event.get_button() === 1) {
-                this.menu.toggle();
-                return Clutter.EVENT_STOP;
-            }
-            return Clutter.EVENT_PROPAGATE;
-        });
-        
         // Microphone/Record Icon (Main Button)
         this._micIcon = new St.Icon({
             icon_name: 'audio-input-microphone-symbolic',
@@ -146,12 +121,14 @@ class OpenDictateIndicator extends PanelMenu.Button {
         });
         this._mainButton.connect('button-press-event', (actor, event) => {
             if (event.get_button() === 1) { // Left click
-                if (this._stateData && this._stateData.state === "RECORDING") {
+                if (this._stateData && this._stateData.state === "OFFLINE") {
+                    this._ensureDaemonRunning();
+                } else if (this._stateData && this._stateData.state === "RECORDING") {
                     this._sendCommand('pause');
                 } else if (this._stateData && this._stateData.state === "PAUSED") {
                     this._sendCommand('record');
                 } else if (this._stateData && (this._stateData.state === "TRANSCRIBING" || this._stateData.state === "CLEANING" || this._stateData.state === "PROCESSING")) {
-                    this._sendCommand('cancel');
+                    return Clutter.EVENT_STOP;
                 } else {
                     this._sendCommand('record');
                 }
@@ -220,7 +197,6 @@ class OpenDictateIndicator extends PanelMenu.Button {
         });
         
         // Add children
-        this._box.add_child(this._gearButton);
         this._box.add_child(this._mainButton);
         this._box.add_child(this._waveform);
         this._box.add_child(this._timeLabel);
@@ -271,6 +247,9 @@ class OpenDictateIndicator extends PanelMenu.Button {
     }
     
     _sendCommand(cmd) {
+        if (cmd === 'quit') {
+            this._updateUI({ state: "OFFLINE" });
+        }
         if (cmd === 'record') {
             this._targetWindow = this._captureFocusWindow();
         }
@@ -289,6 +268,8 @@ class OpenDictateIndicator extends PanelMenu.Button {
                     console.error(`OpenDictate: Socket error sending ${cmd}: ${e.message}`);
                     if (cmd !== 'quit') {
                         this._ensureDaemonRunning();
+                    } else {
+                        this._updateUI({ state: "OFFLINE" });
                     }
                 }
             });
@@ -296,6 +277,8 @@ class OpenDictateIndicator extends PanelMenu.Button {
             console.error(`OpenDictate: Socket setup error: ${e.message}`);
             if (cmd !== 'quit') {
                 this._ensureDaemonRunning();
+            } else {
+                this._updateUI({ state: "OFFLINE" });
             }
         }
     }
@@ -307,6 +290,14 @@ class OpenDictateIndicator extends PanelMenu.Button {
             if (GLib.file_test(daemonScript, GLib.FileTest.EXISTS)) {
                 GLib.spawn_command_line_async(`${daemonBin} ${daemonScript} --force-start`);
             }
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, () => {
+                this._readStateFile();
+                return GLib.SOURCE_REMOVE;
+            });
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2500, () => {
+                this._readStateFile();
+                return GLib.SOURCE_REMOVE;
+            });
         } catch (e) {
             console.error(`OpenDictate: Failed to auto-start daemon: ${e.message}`);
         }
@@ -327,7 +318,22 @@ class OpenDictateIndicator extends PanelMenu.Button {
         
         let icon = this._micIcon;
         
-        if (state === "RECORDING") {
+        if (state === "OFFLINE") {
+            this._stopIndeterminateTimer();
+            this._waveform.setIndeterminate(false);
+            icon.icon_name = 'audio-input-microphone-symbolic';
+            icon.remove_style_class_name('recording');
+            icon.remove_style_class_name('paused');
+            icon.remove_style_class_name('processing');
+            icon.add_style_class_name('offline');
+            
+            this._waveform.hide();
+            this._timeLabel.hide();
+            this._sendButton.hide();
+            this._cancelButton.hide();
+            this._stopTimer();
+            
+        } else if (state === "RECORDING") {
             if (this._previousState !== "RECORDING") {
                 this._targetWindow = this._captureFocusWindow();
             }
@@ -337,6 +343,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
             icon.add_style_class_name('recording');
             icon.remove_style_class_name('paused');
             icon.remove_style_class_name('processing');
+            icon.remove_style_class_name('offline');
             
             this._waveform.show();
             if (stateData.level !== undefined) {
@@ -355,6 +362,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
             icon.remove_style_class_name('recording');
             icon.add_style_class_name('paused');
             icon.remove_style_class_name('processing');
+            icon.remove_style_class_name('offline');
             
             this._waveform.show();
             this._timeLabel.show();
@@ -368,6 +376,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
             icon.remove_style_class_name('recording');
             icon.remove_style_class_name('paused');
             icon.add_style_class_name('processing');
+            icon.remove_style_class_name('offline');
             
             this._waveform.setIndeterminate(true);
             this._waveform.show();
@@ -398,6 +407,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
             icon.remove_style_class_name('recording');
             icon.remove_style_class_name('paused');
             icon.remove_style_class_name('processing');
+            icon.remove_style_class_name('offline');
             
             this._waveform.hide();
             this._timeLabel.hide();
@@ -501,8 +511,17 @@ class OpenDictateIndicator extends PanelMenu.Button {
     }
     
     _readStateFile() {
+        let socketFile = Gio.File.new_for_path(SOCKET_PATH);
+        if (!socketFile.query_exists(null)) {
+            this._updateUI({ state: "OFFLINE" });
+            return;
+        }
+
         let file = Gio.File.new_for_path(STATE_FILE);
-        if (!file.query_exists(null)) return;
+        if (!file.query_exists(null)) {
+            this._updateUI({ state: "OFFLINE" });
+            return;
+        }
         
         try {
             let [, contents] = file.load_contents(null);
@@ -510,6 +529,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
             this._updateUI(stateData);
         } catch (e) {
             console.error(`OpenDictate: Error reading state file: ${e.message}`);
+            this._updateUI({ state: "OFFLINE" });
         }
     }
     

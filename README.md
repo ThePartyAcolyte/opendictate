@@ -36,12 +36,15 @@ You can also enable the **AI Thinking Mode** from the settings. This allows the 
 ## 🚀 Key Features
 
 * **100% Local and Private**: Uses Whisper models running entirely on your local machine.
-* **AI Integration (Optional)**: Transcribe and rewrite your text using Google Gemini (API).
+* **Real-Time Chunk Transcription Engine**: Optimized audio chunk processing with VAD, low-latency streaming transcription, and optional real-time chunk analysis.
+* **Native GNOME Shell Extension (GNOME 45–51)**: Top panel control with live indicator statuses, model switching, and daemon status visualizer.
+* **AI Integration (Optional)**: Transcribe and rewrite your text using Google Gemini / Gemma models.
 * **Smart Window Focus Restoration**: Remembers the target application where dictation started and restores focus before pasting, avoiding cross-app paste errors when switching windows during transcription.
-* **Smart Media Control**: Automatically pauses your music or podcasts when you start recording and resumes when finished.
+* **Mid-Stage Cancellation**: Allows cancelling dictation immediately during audio capture, transcription, or LLM text cleaning stages.
+* **Smart Media Control (MPRIS)**: Automatically pauses your music or podcasts when you start recording and resumes when finished.
 * **Per-App Profiles**: Define specific copy/paste behaviors for each program (useful for terminal, code editors, or browsers).
 * **Floating Bubble**: Immediate visual feedback while you speak.
-* **OpenDeck Integration**: Native plugin to control recording, AI, and settings directly from your Stream Deck.
+* **OpenDeck Integration**: Native plugin with button & rotary dial (encoder) controls, custom Property Inspector settings, and profile switching.
 
 ---
 
@@ -59,9 +62,25 @@ You can also enable the **AI Thinking Mode** from the settings. This allows the 
    *The script will install the required Ubuntu dependencies (xdotool, wl-clipboard, libayatana, etc.), create a virtual environment in `~/.local/share/dictate-whisper` and download the Python packages.*
 
 3. You can find the app shortcut in your application drawer. Open it to access the Settings UI where you can configure your API Key, Whisper model, languages, and app profiles.
-<p align="center">
-<img src="img/app_running_2.png"/>
-</p>
+
+---
+
+## 🧩 GNOME Shell Extension Status Indicators
+
+OpenDictate integrates directly into the GNOME Shell top panel (compatible with GNOME 45 through 51). The panel icon visually reflects the daemon's state in real time:
+
+| State | Indicator | Description |
+| :--- | :---: | :--- |
+| **Active / Ready** | <img src="img/gnome_extension_active.png" height="28" alt="Active" /> | Daemon connected and ready for recording. |
+| **Recording** | <img src="img/gnome_extension_recording.png" height="28" alt="Recording" /> | Audio capture active; listening to input. |
+| **Paused** | <img src="img/gnome_extension_paused.png" height="28" alt="Paused" /> | Audio recording temporarily paused. |
+| **Processing** | <img src="img/gnome_extension_processing.png" height="28" alt="Processing" /> | Transcribing audio / AI rewriting in progress. |
+| **Deactivated / Off** | <img src="img/gnome_extension_deactivated.png" height="28" alt="Deactivated" /> | Extension or daemon disconnected/disabled. |
+
+To enable the extension after installation:
+```bash
+gnome-extensions enable com.kirulab.dictate@kirulab.com
+```
 
 ---
 
@@ -119,10 +138,10 @@ OpenDictate includes a full plugin for **OpenDeck**, perfect for having physical
 ### Available Actions in OpenDeck
 
 * **Record**: A dynamic button that changes color and state depending on whether you are recording, paused, or idle.
-* **Record Control (Encoder)**: An encoder (rotary dial) action to control recording (Push to Record/Pause, Turn Right to Send, Turn Left to Cancel).
-* **Cancel**: Cancels the ongoing recording.
+* **Record Control (Encoder)**: Rotary dial action to control recording (Push to Record/Pause, Turn Right to Send, Turn Left to Cancel). Configurable via the Property Inspector (`inspector.html`) with options for rotational sensitivity threshold, double-tap, long-press actions, and page/profile switching.
+* **Cancel**: Cancels the ongoing recording at any stage.
 * **Send**: Finishes the recording and pastes the text (uses AI if enabled by the toggle).
-* **Monitor**: Empty button used to monitor daemon status.
+* **Monitor**: Button used to monitor daemon status in real time.
 * **Toggle Auto-Send**: Turns the global auto-send on or off.
 * **Toggle AI Cleaning**: Turns the AI rewriting feature on or off.
 * **Toggle Auto-Pause**: Turns automatic media pausing on or off.

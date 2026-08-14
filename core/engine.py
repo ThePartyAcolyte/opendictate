@@ -7,6 +7,7 @@ Supports sliding-window real-time chunk transcription and single-pass full-audio
 import re
 import time
 import logging
+import threading
 import numpy as np
 from typing import Dict, Any, Optional, Tuple, Callable
 
@@ -17,6 +18,7 @@ class WhisperEngine:
     def __init__(self) -> None:
         self.model = None
         self.model_size: str = "medium"
+        self.lock = threading.Lock()
 
     def load_model(self, size: str) -> bool:
         """Load or switch Faster-Whisper model size.
@@ -30,8 +32,9 @@ class WhisperEngine:
         logging.info(f"Loading Faster-Whisper model: {size}...")
         try:
             from faster_whisper import WhisperModel
-            self.model = WhisperModel(size, device="auto", compute_type="default")
-            self.model_size = size
+            with self.lock:
+                self.model = WhisperModel(size, device="auto", compute_type="default")
+                self.model_size = size
             logging.info(f"Faster-Whisper model '{size}' loaded successfully.")
             return True
         except Exception as e:
@@ -52,7 +55,7 @@ class WhisperEngine:
             initial_prompt: Optional previous text context.
 
         Returns:
-            Tuple of (segments generator, info metadata).
+            Tuple of (segments list, info metadata).
         """
         if not self.model:
             raise RuntimeError("Faster-Whisper model is not loaded.")
@@ -76,7 +79,9 @@ class WhisperEngine:
         else:
             kwargs["temperature"] = temp
 
-        return self.model.transcribe(audio_float32, **kwargs)
+        with self.lock:
+            segments_gen, info = self.model.transcribe(audio_float32, **kwargs)
+            return list(segments_gen), info
 
     @staticmethod
     def parse_verbal_punctuation(text: str) -> str:
