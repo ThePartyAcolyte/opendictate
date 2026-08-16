@@ -112,7 +112,7 @@ class LLMService:
                 gen_config.thinking_config = types.ThinkingConfig(thinking_budget=-1)
 
             response = client.models.generate_content_stream(
-                model=config.get("model", "gemma-4"),
+                model=config.get("model", "gemma-4-26b-a4b-it"),
                 contents=prompt_parts,
                 config=gen_config
             )

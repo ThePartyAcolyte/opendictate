@@ -135,7 +135,7 @@ class ConfigWindow(Gtk.Window):
         
         ia_box.pack_start(Gtk.Label(label=self.i18n.t("lbl_model"), xalign=0), False, False, 0)
         self.model_entry = Gtk.Entry()
-        self.model_entry.set_text(self.config.get("model", "gemma-4"))
+        self.model_entry.set_text(self.config.get("model", "gemma-4-26b-a4b-it"))
         self.model_entry.connect("focus-out-event", self.auto_save)
         ia_box.pack_start(self.model_entry, False, False, 0)
         
@@ -254,7 +254,7 @@ class ConfigWindow(Gtk.Window):
         chunk_stride_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         lbl_chunk_stride = Gtk.Label(label=self.i18n.t("lbl_chunk_stride"))
         self.chunk_stride_spin = Gtk.SpinButton.new_with_range(5.0, 30.0, 1.0)
-        self.chunk_stride_spin.set_value(self.config.get("chunk_stride", 10.0))
+        self.chunk_stride_spin.set_value(self.config.get("chunk_stride", 15.0))
         self.chunk_stride_spin.connect("value-changed", self.auto_save)
         chunk_stride_box.pack_start(lbl_chunk_stride, False, False, 0)
         chunk_stride_box.pack_start(self.chunk_stride_spin, False, False, 0)
@@ -272,7 +272,7 @@ class ConfigWindow(Gtk.Window):
         chunk_tol_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         lbl_chunk_tol = Gtk.Label(label=self.i18n.t("lbl_chunk_tolerance"))
         self.chunk_tol_spin = Gtk.SpinButton.new_with_range(0.0, 2.0, 0.1)
-        self.chunk_tol_spin.set_value(self.config.get("chunk_tolerance", 0.4))
+        self.chunk_tol_spin.set_value(self.config.get("chunk_tolerance", 1.0))
         self.chunk_tol_spin.connect("value-changed", self.auto_save)
         chunk_tol_box.pack_start(lbl_chunk_tol, False, False, 0)
         chunk_tol_box.pack_start(self.chunk_tol_spin, False, False, 0)
@@ -436,7 +436,7 @@ class ConfigWindow(Gtk.Window):
             self.notifications_switch.set_active(self.config.get("show_notifications", True))
         
         self.api_key_entry.set_text(self.config.get("api_key", ""))
-        self.model_entry.set_text(self.config.get("model", "gemma-4"))
+        self.model_entry.set_text(self.config.get("model", "gemma-4-26b-a4b-it"))
         
         if hasattr(self, 'llm_timeout_spin'):
             self.llm_timeout_spin.set_value(self.config.get("llm_timeout", 120))
@@ -444,9 +444,9 @@ class ConfigWindow(Gtk.Window):
             self.llm_thinking_switch.set_active(self.config.get("llm_thinking", False))
         
         if hasattr(self, 'vad_switch'):
-            self.chunk_stride_spin.set_value(self.config.get("chunk_stride", 10.0))
+            self.chunk_stride_spin.set_value(self.config.get("chunk_stride", 15.0))
             self.chunk_overlap_spin.set_value(self.config.get("chunk_overlap", 2.0))
-            self.chunk_tol_spin.set_value(self.config.get("chunk_tolerance", 0.4))
+            self.chunk_tol_spin.set_value(self.config.get("chunk_tolerance", 1.0))
             self.vad_switch.set_active(self.config.get("vad_filter", False))
             self.lang_combo.set_active_id(self.config.get("language", "auto"))
             self.ui_lang_combo.set_active_id(self.config.get("ui_language", "en"))

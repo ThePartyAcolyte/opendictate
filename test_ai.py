@@ -17,7 +17,7 @@ def main():
         print("No se encontró API Key en la configuración.")
         return
         
-    model = config.get("model", "gemma-4")
+    model = config.get("model", "gemma-4-26b-a4b-it")
     temperature = config.get("llm_temperature", 0.7)
     thinking = config.get("llm_thinking", False)
     

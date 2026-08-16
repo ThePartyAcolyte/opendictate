@@ -256,9 +256,9 @@ class DictationDaemon:
 
     def _streaming_transcriber_loop(self) -> None:
         """Sliding-window transcription thread running during real-time recording."""
-        stride = self.config.get("chunk_stride", 10.0)
+        stride = self.config.get("chunk_stride", 15.0)
         overlap = self.config.get("chunk_overlap", 2.0)
-        tolerance = self.config.get("chunk_tolerance", 0.4)
+        tolerance = self.config.get("chunk_tolerance", 1.0)
         bytes_per_sec = 16000 * 2
 
         while self.state in ["RECORDING", "PAUSED"]:
@@ -377,7 +377,7 @@ class DictationDaemon:
                 self.confirmed_text = full_text
             else:
                 overlap = self.config.get("chunk_overlap", 2.0)
-                tolerance = self.config.get("chunk_tolerance", 0.4)
+                tolerance = self.config.get("chunk_tolerance", 1.0)
                 if current_audio_time > self.last_transcribed_time:
                     chunk_start = max(0.0, self.last_transcribed_time - overlap)
                     start_idx = int(chunk_start * bytes_per_sec)
