@@ -148,7 +148,8 @@ class DictationDaemon:
             "CLEANING": "cleaning",
             "PROCESSING": "processing",
             "LOADING": "loading_model",
-            "IDLE": "ready"
+            "IDLE": "ready",
+            "OFFLINE": "offline_no_models"
         }
         key = status_key_map.get(self.state, "processing")
         if key == "ready":
@@ -194,20 +195,40 @@ class DictationDaemon:
     # Model Loading
     # -------------------------------------------------------------------------
     def load_model_async(self, size: str) -> None:
-        """Asynchronously load specified Whisper model size."""
+        """Asynchronously load specified Whisper model size with multi-tier fallback."""
         self.state = "LOADING"
         self.update_status(self.i18n.t("loading_model_param", size=size))
+        self.export_state()
+
         def _loader():
-            success = self.engine.load_model(size)
-            if success:
-                self.config["whisper_model_size"] = size
+            success, loaded_size, status_code = self.engine.load_model(size)
+            if success and loaded_size:
+                self.config["whisper_model_size"] = loaded_size
                 self.config_manager.save_config(self.config)
+                if status_code == "fallback_local":
+                    GLib.idle_add(
+                        self.show_notification,
+                        "OpenDictate",
+                        self.i18n.t("fallback_model_loaded", requested=size, loaded=loaded_size),
+                        4000
+                    )
                 GLib.idle_add(self.reset_state)
             else:
-                GLib.idle_add(self.show_notification, self.i18n.t("error_whisper"), self.i18n.t("error_loading_model"))
-                GLib.idle_add(self.reset_state)
+                GLib.idle_add(self.handle_initialization_failure)
 
         threading.Thread(target=_loader, daemon=True).start()
+
+    def handle_initialization_failure(self) -> None:
+        """Handle total failure when no models are cached and no internet connection exists."""
+        self.state = "OFFLINE"
+        status_text = self.i18n.t("offline_no_models")
+        self.update_status(status_text)
+        self.export_state()
+        self.show_notification(
+            self.i18n.t("error_whisper"),
+            self.i18n.t("error_no_models_offline"),
+            5000
+        )
 
     # -------------------------------------------------------------------------
     # Recording Lifecycle
@@ -215,7 +236,7 @@ class DictationDaemon:
     def start_recording(self) -> None:
         """Initiate audio capture lifecycle."""
         if not self.engine.model:
-            self.show_notification("OpenDictate", self.i18n.t("loading_model"))
+            self.show_notification("OpenDictate", self.i18n.t("error_no_models_offline"))
             return
 
         self.current_app_class, self.current_window_title = get_active_window_info()

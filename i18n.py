@@ -40,6 +40,9 @@ TRANSLATIONS = {
         "error_plugin_not_found": "Source plugin not found.",
         "error_whisper": "Whisper Error",
         "error_loading_model": "Error loading model",
+        "fallback_model_loaded": "Configured model '{requested}' not found. Loaded '{loaded}' as local fallback.",
+        "error_no_models_offline": "Could not start OpenDictate: No local Whisper models found and no Internet connection.",
+        "offline_no_models": "Offline (No models)",
 
         "settings_title": "Settings - OpenDictate",
         "tab_general": "General",
@@ -139,6 +142,9 @@ TRANSLATIONS = {
         "error_plugin_not_found": "No se encontró el plugin fuente.",
         "error_whisper": "Error de Whisper",
         "error_loading_model": "Error cargando modelo",
+        "fallback_model_loaded": "Modelo configurado '{requested}' no encontrado. Se cargó '{loaded}' como alternativa local.",
+        "error_no_models_offline": "No se puede iniciar OpenDictate: No hay modelos de Whisper descargados en local ni conexión a Internet.",
+        "offline_no_models": "Sin modelos (Desconectado)",
 
         "settings_title": "Configuración - OpenDictate",
         "tab_general": "General",
@@ -239,6 +245,9 @@ TRANSLATIONS = {
         "error_plugin_not_found": "Quell-Plugin nicht gefunden.",
         "error_whisper": "Whisper Fehler",
         "error_loading_model": "Fehler beim Laden des Modells",
+        "fallback_model_loaded": "Konfiguriertes Modell '{requested}' nicht gefunden. '{loaded}' wurde als lokaler Fallback geladen.",
+        "error_no_models_offline": "OpenDictate konnte nicht gestartet werden: Keine lokalen Whisper-Modelle gefunden und keine Internetverbindung.",
+        "offline_no_models": "Offline (Keine Modelle)",
 
         "settings_title": "Einstellungen - OpenDictate",
         "tab_general": "Allgemein",
@@ -334,6 +343,9 @@ TRANSLATIONS = {
         "error_plugin_not_found": "Plugin source introuvable.",
         "error_whisper": "Erreur Whisper",
         "error_loading_model": "Erreur lors du chargement du modèle",
+        "fallback_model_loaded": "Modèle configuré '{requested}' introuvable. '{loaded}' a été chargé comme solution de secours locale.",
+        "error_no_models_offline": "Impossible de démarrer OpenDictate : aucun modèle Whisper local trouvé et aucune connexion Internet.",
+        "offline_no_models": "Hors ligne (Aucun modèle)",
 
         "settings_title": "Paramètres - OpenDictate",
         "tab_general": "Général",

@@ -9,7 +9,22 @@ import time
 import logging
 import threading
 import numpy as np
-from typing import Dict, Any, Optional, Tuple, Callable
+from typing import Dict, Any, Optional, Tuple, Callable, List
+
+KNOWN_MODEL_SIZES = [
+    "large-v3",
+    "large-v2",
+    "large-v1",
+    "large",
+    "medium",
+    "medium.en",
+    "small",
+    "small.en",
+    "base",
+    "base.en",
+    "tiny",
+    "tiny.en"
+]
 
 
 class WhisperEngine:
@@ -20,26 +35,85 @@ class WhisperEngine:
         self.model_size: str = "medium"
         self.lock = threading.Lock()
 
-    def load_model(self, size: str) -> bool:
-        """Load or switch Faster-Whisper model size.
+    @staticmethod
+    def _get_fallback_candidates(requested_size: str) -> List[str]:
+        """Generate ordered list of fallback model candidates.
+
+        Prioritizes models smaller than the requested size first, then larger models.
+
+        Args:
+            requested_size: Requested model size name.
+
+        Returns:
+            List of fallback model size candidate names.
+        """
+        if requested_size in KNOWN_MODEL_SIZES:
+            idx = KNOWN_MODEL_SIZES.index(requested_size)
+            candidates = KNOWN_MODEL_SIZES[idx + 1:] + KNOWN_MODEL_SIZES[:idx]
+        else:
+            candidates = [s for s in KNOWN_MODEL_SIZES if s != requested_size]
+        return candidates
+
+    def load_model(self, size: str) -> Tuple[bool, Optional[str], str]:
+        """Load Faster-Whisper model with multi-tier fallback resolution.
+
+        Sequence:
+        1. Attempt local cached load for requested model (local_files_only=True).
+        2. Attempt remote download for requested model (local_files_only=False).
+        3. Fallback to any other locally cached Whisper model (local_files_only=True).
+        4. Fail gracefully if no models and no internet connection.
 
         Args:
             size: Model size name (e.g. tiny, base, small, medium, large-v3).
 
         Returns:
-            True if model loaded successfully, False otherwise.
+            Tuple of (success: bool, loaded_model_name: Optional[str], status_code: str).
+            Status codes: 'loaded_local', 'downloaded', 'fallback_local', 'failed_no_models'.
         """
-        logging.info(f"Loading Faster-Whisper model: {size}...")
+        logging.info(f"Initiating model loading process for: {size}...")
         try:
             from faster_whisper import WhisperModel
-            with self.lock:
-                self.model = WhisperModel(size, device="auto", compute_type="default")
+        except ImportError as err:
+            logging.error(f"Failed to import faster_whisper: {err}", exc_info=True)
+            return False, None, "failed_no_models"
+
+        with self.lock:
+            # 1. Attempt local load of requested model
+            try:
+                logging.info(f"Attempting local load for requested model '{size}'...")
+                self.model = WhisperModel(size, device="auto", compute_type="default", local_files_only=True)
                 self.model_size = size
-            logging.info(f"Faster-Whisper model '{size}' loaded successfully.")
-            return True
-        except Exception as e:
-            logging.error(f"Error loading Faster-Whisper model '{size}': {e}", exc_info=True)
-            return False
+                logging.info(f"Faster-Whisper model '{size}' loaded from local cache.")
+                return True, size, "loaded_local"
+            except Exception as local_err:
+                logging.info(f"Local load failed for '{size}' ({local_err}). Checking remote download...")
+
+            # 2. Attempt remote download of requested model
+            try:
+                logging.info(f"Attempting remote download and load for '{size}'...")
+                self.model = WhisperModel(size, device="auto", compute_type="default", local_files_only=False)
+                self.model_size = size
+                logging.info(f"Faster-Whisper model '{size}' successfully downloaded and loaded.")
+                return True, size, "downloaded"
+            except Exception as download_err:
+                logging.warning(f"Remote download failed for '{size}' ({download_err}). Initiating local fallback search...")
+
+            # 3. Fallback to any other locally available model
+            candidates = self._get_fallback_candidates(size)
+            for candidate in candidates:
+                try:
+                    logging.info(f"Attempting local fallback to '{candidate}'...")
+                    self.model = WhisperModel(candidate, device="auto", compute_type="default", local_files_only=True)
+                    self.model_size = candidate
+                    logging.info(f"Faster-Whisper fallback model '{candidate}' loaded from local cache.")
+                    return True, candidate, "fallback_local"
+                except Exception:
+                    continue
+
+            # 4. Total failure (no local models, no internet)
+            self.model = None
+            logging.error("Failed to initialize any Faster-Whisper model (no local models cached and no network connection).")
+            return False, None, "failed_no_models"
 
     def transcribe_chunk(
         self,
