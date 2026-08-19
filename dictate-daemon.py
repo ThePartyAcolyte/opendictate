@@ -106,6 +106,8 @@ class DictationDaemon:
             "toggle-autosend": lambda: GLib.idle_add(self.action_toggle_autosend),
             "toggle-realtime": lambda: GLib.idle_add(self.action_toggle_realtime),
             "toggle_realtime": lambda: GLib.idle_add(self.action_toggle_realtime),
+            "toggle-bubble": lambda: GLib.idle_add(self.action_toggle_bubble),
+            "toggle_bubble": lambda: GLib.idle_add(self.action_toggle_bubble),
             "toggle-record-send": lambda: GLib.idle_add(self.action_record),
             "finish-normal": lambda: GLib.idle_add(self.action_finish_normal),
             "finish-ai": lambda: GLib.idle_add(self.action_finish_ai),
@@ -250,7 +252,7 @@ class DictationDaemon:
         self.confirmed_text = ""
         self.last_transcribed_time = 0.0
 
-        if self.config.get("realtime_mode", True):
+        if self.config.get("realtime_mode", True) and not self.config.get("hide_bubble", False):
             self.bubble.show_recording_state()
 
         self.bubble.level_bar.set_value(0.0)
@@ -681,6 +683,15 @@ class DictationDaemon:
         self.config_manager.save_config(self.config)
         self.export_state()
         self.show_notification("OpenDictate", self.i18n.t("realtime_enabled") if new_state else self.i18n.t("realtime_disabled"))
+
+    def action_toggle_bubble(self) -> None:
+        new_state = not self.config.get("hide_bubble", False)
+        self.config["hide_bubble"] = new_state
+        self.config_manager.save_config(self.config)
+        self.export_state()
+        if new_state:
+            self.bubble.hide()
+        self.show_notification("OpenDictate", self.i18n.t("bubble_hidden") if new_state else self.i18n.t("bubble_visible"))
 
     def action_cycle_model(self) -> None:
         sizes = ["tiny", "base", "small", "medium", "large-v3"]

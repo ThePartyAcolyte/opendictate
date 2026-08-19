@@ -255,6 +255,8 @@ class BubbleWindow:
 
     def show_recording_state(self) -> None:
         """Configure layout for RECORDING or PAUSED state."""
+        if self.config.get("hide_bubble", False):
+            return
         self.displayed_text = ""
         self.target_text = ""
         self.queue_words.clear()
@@ -266,12 +268,16 @@ class BubbleWindow:
 
     def show_processing_state(self) -> None:
         """Configure layout for TRANSCRIBING processing state."""
+        if self.config.get("hide_bubble", False):
+            return
         self.level_bar.get_style_context().add_class("transcribing")
         self.level_bar.show()
         self.window.show_all()
 
     def show_preview_state(self, text: str) -> None:
         """Configure window layout for PREVIEW state showing final text buffer."""
+        if self.config.get("hide_bubble", False):
+            return
         self._stop_timers()
         self.displayed_text = text
         self.target_text = text
@@ -282,6 +288,9 @@ class BubbleWindow:
 
     def set_live_text(self, text: str) -> None:
         """Update target preview text and queue new words for smooth streaming animation."""
+        if self.config.get("hide_bubble", False):
+            return
+
         if text == self.target_text:
             return
 
