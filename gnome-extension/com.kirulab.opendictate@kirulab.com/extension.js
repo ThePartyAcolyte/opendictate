@@ -9,8 +9,8 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const STATE_FILE = '/tmp/dictate_state.json';
-const SOCKET_PATH = '/tmp/dictate_daemon.socket';
+const STATE_FILE = '/tmp/opendictate_state.json';
+const SOCKET_PATH = '/tmp/opendictate.socket';
 
 const Waveform = GObject.registerClass(
 class Waveform extends St.DrawingArea {
@@ -285,8 +285,8 @@ class OpenDictateIndicator extends PanelMenu.Button {
 
     _ensureDaemonRunning() {
         try {
-            let daemonBin = `${GLib.get_home_dir()}/.local/share/dictate-whisper/.venv/bin/python`;
-            let daemonScript = `${GLib.get_home_dir()}/.local/share/dictate-whisper/dictate-daemon.py`;
+            let daemonBin = `${GLib.get_home_dir()}/.local/share/opendictate/.venv/bin/python`;
+            let daemonScript = `${GLib.get_home_dir()}/.local/share/opendictate/opendictate-daemon.py`;
             if (GLib.file_test(daemonScript, GLib.FileTest.EXISTS)) {
                 GLib.spawn_command_line_async(`${daemonBin} ${daemonScript} --force-start`);
             }
@@ -371,7 +371,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
             this._stopTimer();
             this._updateTimeDisplay();
             
-        } else if (state === "LOADING" || state === "PREVIEW" || state === "CLEANING" || state === "PROCESSING" || state === "TRANSCRIBING") {
+        } else if (state === "LOADING" || state === "CLEANING" || state === "PROCESSING" || state === "TRANSCRIBING") {
             icon.icon_name = 'audio-input-microphone-symbolic';
             icon.remove_style_class_name('recording');
             icon.remove_style_class_name('paused');

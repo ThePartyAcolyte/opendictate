@@ -1,7 +1,7 @@
 {
   "name": "OpenDictate Status",
   "description": "Top bar integration for OpenDictate with quick controls and recording status.",
-  "uuid": "com.kirulab.dictate@kirulab.com",
+  "uuid": "com.kirulab.opendictate@kirulab.com",
   "shell-version": [
     "45",
     "46",
@@ -11,5 +11,5 @@
     "50",
     "51"
   ],
-  "url": "https://github.com/KiruLab/opendictate"
+  "url": "https://github.com/ThePartyAcolyte/opendictate"
 }

@@ -1,72 +1,101 @@
 #!/bin/bash
+set -e
 
-# Configuration
-INSTALL_DIR="$HOME/.local/share/dictate-whisper"
-AUTOSTART_DIR="$HOME/.config/autostart"
+INSTALL_DIR="$HOME/.local/share/opendictate"
 VENV_DIR="$INSTALL_DIR/.venv"
+OPENDECK_PLUGINS_DIR="$HOME/.config/opendeck/plugins"
+GNOME_EXT_DIR="$HOME/.local/share/gnome-shell/extensions/com.kirulab.opendictate@kirulab.com"
 
-echo "🚀 Iniciando instalación de OpenDictate..."
+echo "🚀 Instalando / Actualizando OpenDictate en $INSTALL_DIR..."
 
-echo "📦 Instalando dependencias de sistema (requiere sudo)..."
-sudo apt update
-sudo apt install -y gir1.2-ayatanaappindicator3-0.1 wl-clipboard ydotool wmctrl xdotool python3-dev python3-cairo libcairo2-dev libgirepository1.0-dev
-
-echo "📁 Creando directorios..."
 mkdir -p "$INSTALL_DIR"
-mkdir -p "$AUTOSTART_DIR"
+mkdir -p "$HOME/.local/bin"
+mkdir -p "$HOME/.local/share/applications"
 
-echo "📄 Copiando archivos y scripts..."
-cp dictate-daemon.py "$INSTALL_DIR/"
-cp dictate-client.py "$INSTALL_DIR/"
-cp dictate_config_ui.py "$INSTALL_DIR/"
+echo "📄 Copiando archivos de la aplicación..."
+if [ -d "$INSTALL_DIR" ]; then
+    echo "🧹 Limpiando archivos de código fuente previos..."
+    find "$INSTALL_DIR" -maxdepth 1 -type f -name "*.py" -delete
+    rm -rf "$INSTALL_DIR/core" "$INSTALL_DIR/ui" "$INSTALL_DIR/plugins" "$INSTALL_DIR/img"
+fi
+mkdir -p "$INSTALL_DIR"
+cp opendictate-daemon.py "$INSTALL_DIR/"
+cp opendictate-client.py "$INSTALL_DIR/"
+cp opendictate_config_ui.py "$INSTALL_DIR/"
+cp launch_wizard.py "$INSTALL_DIR/"
 cp i18n.py "$INSTALL_DIR/"
 cp -r core "$INSTALL_DIR/"
 cp -r ui "$INSTALL_DIR/"
 cp -r plugins "$INSTALL_DIR/"
 cp -r img "$INSTALL_DIR/"
 
-echo "🧩 Instalando Extensión de GNOME Shell..."
-GNOME_EXT_DIR="$HOME/.local/share/gnome-shell/extensions/com.kirulab.dictate@kirulab.com"
+echo "🧩 Desplegando Extensión de GNOME Shell..."
 mkdir -p "$GNOME_EXT_DIR"
-cp -r gnome-extension/com.kirulab.dictate@kirulab.com/* "$GNOME_EXT_DIR/"
+cp -r gnome-extension/com.kirulab.opendictate@kirulab.com/* "$GNOME_EXT_DIR/"
 
-chmod +x "$INSTALL_DIR/dictate-daemon.py"
-chmod +x "$INSTALL_DIR/dictate-client.py"
-
-echo "🐍 Configurando entorno virtual híbrido con uv..."
-if ! command -v uv &> /dev/null; then
-    echo "Instalando uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.cargo/bin:$PATH"
+if [ -d "$HOME/.config/opendeck" ]; then
+    echo "📦 Desplegando Plugin para OpenDeck..."
+    mkdir -p "$OPENDECK_PLUGINS_DIR"
+    rm -rf "$OPENDECK_PLUGINS_DIR/com.kirulab.opendictate.sdplugin"
+    cp -r plugins/com.kirulab.opendictate.sdplugin "$OPENDECK_PLUGINS_DIR/"
 fi
 
-rm -rf "$VENV_DIR"
-uv venv --system-site-packages --python /usr/bin/python3 "$VENV_DIR"
-uv pip install faster-whisper google-genai pycairo keyring --python "$VENV_DIR"
+echo "🐍 Verificando entorno virtual Python..."
+if [ ! -d "$VENV_DIR" ] || [ ! -f "$VENV_DIR/bin/python" ]; then
+    echo "Creando entorno virtual limpio..."
+    rm -rf "$VENV_DIR"
+    if ! command -v uv &> /dev/null; then
+        echo "Instalando uv..."
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        export PATH="$HOME/.cargo/bin:$PATH"
+    fi
+    uv venv --system-site-packages --python /usr/bin/python3 "$VENV_DIR"
+    uv pip install faster-whisper google-genai pycairo keyring --python "$VENV_DIR"
 
-echo "🔧 Actualizando shebangs para usar el entorno virtual..."
-sed -i "1s|.*|#!$VENV_DIR/bin/python|" "$INSTALL_DIR/dictate-daemon.py"
-sed -i "1s|.*|#!$VENV_DIR/bin/python|" "$INSTALL_DIR/dictate-client.py"
+    if command -v nvidia-smi &> /dev/null || (command -v lspci &> /dev/null && lspci | grep -iq nvidia); then
+        echo "⚡ Tarjeta NVIDIA detectada. Instalando librerías de aceleración CUDA (cuBLAS / cuDNN)..."
+        uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 --python "$VENV_DIR" || true
+    fi
+fi
 
-echo "⚙️ Configurando acceso directo de aplicación..."
-mkdir -p "$HOME/.local/share/applications"
-cat > "$HOME/.local/share/applications/dictate-whisper.desktop" << EOF
+echo "🔧 Configurando permisos y shebangs..."
+sed -i "1s|.*|#!$VENV_DIR/bin/python|" "$INSTALL_DIR/opendictate-daemon.py"
+sed -i "1s|.*|#!$VENV_DIR/bin/python|" "$INSTALL_DIR/opendictate-client.py"
+sed -i "1s|.*|#!$VENV_DIR/bin/python|" "$INSTALL_DIR/opendictate_config_ui.py"
+sed -i "1s|.*|#!$VENV_DIR/bin/python|" "$INSTALL_DIR/launch_wizard.py"
+
+chmod +x "$INSTALL_DIR/opendictate-daemon.py"
+chmod +x "$INSTALL_DIR/opendictate-client.py"
+chmod +x "$INSTALL_DIR/launch_wizard.py"
+
+ln -sf "$INSTALL_DIR/opendictate-client.py" "$HOME/.local/bin/opendictate"
+chmod +x "$HOME/.local/bin/opendictate"
+
+echo "📝 Creando acceso directo de escritorio..."
+cat > "$HOME/.local/share/applications/opendictate.desktop" << DESK_EOF
 [Desktop Entry]
 Type=Application
 Name=OpenDictate
-Comment=Background daemon for global voice dictation using faster-whisper
-Exec=$INSTALL_DIR/.venv/bin/python $INSTALL_DIR/dictate-daemon.py
-Hidden=false
-NoDisplay=false
-Icon=$INSTALL_DIR/img/logo.png
+Comment=Global voice dictation assistant powered by faster-whisper and Gemini AI
+Exec=${HOME}/.local/share/opendictate/.venv/bin/python ${HOME}/.local/share/opendictate/opendictate-daemon.py --force-start
+Icon=${HOME}/.local/share/opendictate/img/logo.png
 Terminal=false
-Categories=Utility;
-EOF
+Categories=Utility;AudioVideo;Accessibility;
+Keywords=dictate;whisper;voice;speech;transcribe;
+DESK_EOF
 
-echo "✅ Instalación completada."
+echo "🔄 Iniciando demonio OpenDictate..."
+pkill -9 -f opendictate-daemon.py || true
+rm -f /tmp/opendictate.socket
+sleep 1
+
+export DISPLAY="${DISPLAY:-:0}"
+export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
+nohup "$VENV_DIR/bin/python" "$INSTALL_DIR/opendictate-daemon.py" --force-start >/dev/null 2>&1 &
+
+echo "✅ Instalación y despliegue completados exitosamente."
 echo ""
-echo "Para iniciar el demonio ahora, ejecuta:"
-echo "  nohup $INSTALL_DIR/dictate-daemon.py >/dev/null 2>&1 &"
-echo ""
-echo "Para usarlo desde un atajo de teclado o OpenDeck:"
-echo "  $INSTALL_DIR/dictate-client.py"
+echo "Comandos disponibles:"
+echo "  opendictate --toggle-record-send    (Alternar grabación / envío)"
+echo "  opendictate --settings              (Abrir panel de Ajustes)"
+echo "  opendictate --wizard                (Abrir Asistente Inicial)"

@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 import sys
 import socket
+import os
+import sys
 
-SOCKET_PATH = "/tmp/dictate_daemon.socket"
+# Allow running from the install directory or the repo root
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
+from core.ipc import SOCKET_PATH
 
 def main():
     if "--record" in sys.argv or "record" in sys.argv:
@@ -13,18 +20,10 @@ def main():
         cmd = "cancel"
     elif "--send" in sys.argv or "send" in sys.argv:
         cmd = "send"
-    elif "--preview" in sys.argv or "preview" in sys.argv:
-        cmd = "preview"
     elif "--finish-normal" in sys.argv or "finish-normal" in sys.argv:
         cmd = "finish-normal"
     elif "--finish-ai" in sys.argv or "finish-ai" in sys.argv:
         cmd = "finish-ai"
-    elif "--autosend-activate" in sys.argv or "autosend-activate" in sys.argv:
-        cmd = "autosend-activate"
-    elif "--autosend-deactivate" in sys.argv or "autosend-deactivate" in sys.argv:
-        cmd = "autosend-deactivate"
-    elif "--toggle-autopause" in sys.argv:
-        cmd = "toggle-autopause"
     elif "--toggle-bubble" in sys.argv:
         cmd = "toggle-bubble"
     elif "--toggle-record-send" in sys.argv:
@@ -39,8 +38,10 @@ def main():
         cmd = "toggle-realtime"
     elif "--settings" in sys.argv or "settings" in sys.argv:
         cmd = "settings"
+    elif "--wizard" in sys.argv or "wizard" in sys.argv:
+        cmd = "wizard"
     else:
-        print("Uso: dictate-client.py [--record|--pause|--cancel|--preview|--finish-normal|--finish-ai|--settings|--autosend-activate|--autosend-deactivate|--toggle-autopause|--toggle-bubble|--toggle-record-send|--toggle-ai|--toggle-autosend|--toggle-realtime|--cycle-model]")
+        print("Usage: opendictate [--record|--pause|--cancel|--finish-normal|--finish-ai|--settings|--wizard|--toggle-bubble|--toggle-record-send|--toggle-ai|--toggle-autosend|--toggle-realtime|--cycle-model]")
         sys.exit(0)
 
     try:

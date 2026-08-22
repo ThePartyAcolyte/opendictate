@@ -8,13 +8,16 @@ import signal
 import base64
 import time
 import math
+import shutil
 from PIL import Image, ImageDraw
 import logging
 
-logging.basicConfig(filename='/tmp/dictate_plugin.log', level=logging.DEBUG, 
+logging.basicConfig(filename='/tmp/opendictate_plugin.log', level=logging.DEBUG, 
                     format='%(asctime)s %(levelname)s: %(message)s')
 import io
 import base64
+
+CLI_BIN = shutil.which("opendictate") or os.path.expanduser("~/.local/bin/opendictate")
 
 # Stream Deck SDK arguments
 port = None
@@ -38,7 +41,6 @@ active_contexts = {
     "record": set(),
     "record_encoder": set(),
     "send": set(),
-    "preview": set(),
     "cancel": set(),
     "ai": set(),
     "autosend": set(),
@@ -58,14 +60,14 @@ def execute_primary_action():
     state_data = get_daemon_state()
     logging.debug(f"Executing primary action, daemon state: {state_data.get('state')}")
     if state_data.get("state") == "RECORDING":
-        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--pause"])
+        subprocess.Popen([CLI_BIN, "--pause"])
     else:
-        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--record"])
+        subprocess.Popen([CLI_BIN, "--record"])
 
 async def execute_secondary_action(ws, action_type, profile, dev_id):
     logging.debug(f"Executing secondary action: {action_type}")
     if action_type == "settings":
-        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--settings"])
+        subprocess.Popen([CLI_BIN, "--settings"])
     elif action_type == "switch_profile":
         if profile:
             await ws.send(json.dumps({
@@ -113,7 +115,7 @@ def update_encoder_settings(context, settings):
 
 force_update = False
 
-STATE_FILE = "/tmp/dictate_state.json"
+STATE_FILE = "/tmp/opendictate_state.json"
 
 def get_daemon_state():
     for _ in range(3):
@@ -245,14 +247,8 @@ async def watch_state(ws):
                 
             # Update Send and Cancel states
             send_usable = 1 if current_state in ["RECORDING", "PAUSED"] else 0
-            cancel_usable = 1 if current_state in ["RECORDING", "PAUSED", "TRANSCRIBING", "CLEANING", "PROCESSING", "LOADING", "PREVIEW"] else 0
+            cancel_usable = 1 if current_state in ["RECORDING", "PAUSED", "TRANSCRIBING", "CLEANING", "PROCESSING", "LOADING"] else 0
             for ctx in active_contexts["send"].copy():
-                await ws.send(json.dumps({
-                    "event": "setState",
-                    "context": ctx,
-                    "payload": {"state": send_usable}
-                }))
-            for ctx in active_contexts["preview"].copy():
                 await ws.send(json.dumps({
                     "event": "setState",
                     "context": ctx,
@@ -336,9 +332,6 @@ async def connect_streamdeck():
                     active_contexts["record_encoder"].add(context)
                 elif act_suffix == "send":
                     active_contexts["send"].add(context)
-
-                elif act_suffix == "preview":
-                    active_contexts["preview"].add(context)
                 elif act_suffix == "cancel":
                     active_contexts["cancel"].add(context)
                 elif act_suffix == "toggle_ai":
@@ -453,7 +446,7 @@ async def connect_streamdeck():
                         "payload": {"state": send_usable}
                     })))
                 elif act_suffix == "cancel":
-                    cancel_usable = 1 if current_state in ["RECORDING", "PAUSED", "TRANSCRIBING", "CLEANING", "PROCESSING", "LOADING", "PREVIEW"] else 0
+                    cancel_usable = 1 if current_state in ["RECORDING", "PAUSED", "TRANSCRIBING", "CLEANING", "PROCESSING", "LOADING"] else 0
                     asyncio.create_task(ws.send(json.dumps({
                         "event": "setState",
                         "context": context,
@@ -470,8 +463,6 @@ async def connect_streamdeck():
                     active_contexts["record_encoder"].remove(context)
                 elif act_suffix == "send" and context in active_contexts["send"]:
                     active_contexts["send"].remove(context)
-                elif act_suffix == "preview" and context in active_contexts["preview"]:
-                    active_contexts["preview"].remove(context)
                 elif act_suffix == "cancel" and context in active_contexts["cancel"]:
                     active_contexts["cancel"].remove(context)
                 elif act_suffix == "toggle_ai" and context in active_contexts["ai"]:
@@ -594,23 +585,21 @@ async def connect_streamdeck():
                     else:
                         execute_primary_action()
                 elif act_suffix == "monitor":
-                    subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--cycle-model"])
+                    subprocess.Popen([CLI_BIN, "--cycle-model"])
                 elif act_suffix == "send":
-                    subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--send"])
-                elif act_suffix == "preview":
-                    subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--preview"])
+                    subprocess.Popen([CLI_BIN, "--send"])
                 elif act_suffix == "cancel":
-                    subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--cancel"])
+                    subprocess.Popen([CLI_BIN, "--cancel"])
                 elif act_suffix == "toggle_ai":
-                    subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--toggle-ai"])
+                    subprocess.Popen([CLI_BIN, "--toggle-ai"])
                 elif act_suffix == "toggle_autosend":
-                    subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--toggle-autosend"])
+                    subprocess.Popen([CLI_BIN, "--toggle-autosend"])
                 elif act_suffix == "toggle_autopause":
-                    subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--toggle-autopause"])
+                    subprocess.Popen([CLI_BIN, "--toggle-autopause"])
                 elif act_suffix == "toggle_bubble":
-                    subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--toggle-bubble"])
+                    subprocess.Popen([CLI_BIN, "--toggle-bubble"])
                 elif act_suffix == "toggle_realtime":
-                    subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--toggle-realtime"])
+                    subprocess.Popen([CLI_BIN, "--toggle-realtime"])
 
             elif event == "dialRotate":
                 act_suffix = action.split(".")[-1]
@@ -628,10 +617,10 @@ async def connect_streamdeck():
                     state["last_time"] = now
                     
                     if state["ticks"] >= threshold:
-                        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--send"])
+                        subprocess.Popen([CLI_BIN, "--send"])
                         state["ticks"] = 0
                     elif state["ticks"] <= -threshold:
-                        subprocess.Popen(["/home/butcherwutcher/.local/bin/dictate", "--cancel"])
+                        subprocess.Popen([CLI_BIN, "--cancel"])
                         state["ticks"] = 0
 
 if __name__ == "__main__":

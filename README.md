@@ -1,157 +1,98 @@
-# OpenDictate
+<div align="center">
+  <img src="img/logo.png" width="150" alt="OpenDictate Logo" />
+  <h1>OpenDictate</h1>
+  <p><strong>Privacy-First, Global Voice Dictation for Linux</strong></p>
+</div>
 
-A powerful and versatile local dictation assistant for Linux (Wayland/X11) powered by `faster-whisper`.
-OpenDictate runs in the background and allows you to dictate text into any application, rewrite it using Artificial Intelligence (Gemma/Gemini), and control everything via keyboard shortcuts or an Elgato Stream Deck using **OpenDeck**.
+<hr>
 
-## 📸 Screenshots
+OpenDictate is an omnipresent, background voice dictation daemon for Linux desktop environments. Built with a strict privacy-first philosophy, it leverages local on-device transcription to act as a system-wide microphone layer. It allows you to dictate text directly into any focused window—exactly like native dictation on macOS or Windows—without sending your voice audio to third-party servers.
 
-![App Running](img/app_running_3.gif)
+## 🛡️ Core Philosophy: Privacy & Local Processing
 
-## 🌍 Multilingual Capabilities
-Thanks to the robust architecture of OpenAI's Whisper models, OpenDictate natively supports multilingual transcription. You can dictate in English, Spanish, French, German, Italian, Portuguese, and many other languages. The tool allows you to:
-- Automatically detect the spoken language.
-- Force transcription into a specific language for improved accuracy.
-- Translate your voice from any supported language into English on the fly.
+The primary objective of OpenDictate is to guarantee that your voice data never leaves your machine. 
+All audio capture, Voice Activity Detection (VAD), and speech-to-text inference are handled 100% locally using **`faster-whisper`** (CTranslate2). 
 
-## 🤖 AI Models (Gemini / Gemma)
-
-By default, OpenDictate uses the free tier of the Gemini API (specifically configuring Gemma/Gemini models) to power the "AI Cleaning" feature. 
-This was chosen as the baseline because it is **completely free** and provides a very generous amount of usage.
-
-**Limitations of the Free Tier:**
-While excellent for daily tasks, the free API might sometimes be slow, experience rate limits, or encounter timeouts during peak hours.
-
-If you encounter these issues or simply want better quality and speed, you can easily switch to a more powerful model (like `gemini-3.5-flash`) by following these steps:
-
-**How to get your API Key and change the model:**
-1. Go to [Google AI Studio (API Keys)](https://aistudio.google.com/app/apikey).
-2. Sign in with your Google account.
-3. Click on **Create API key** and copy it to your clipboard.
-4. Open the OpenDictate settings, navigate to the **AI & Models** tab, and paste your API key.
-5. In the **Model** field, you can leave the default, or upgrade it to `gemini-3.5-flash` (or any other supported model) if you want the best performance and reliability. (https://ai.google.dev/gemini-api/docs/models)
-
-**Thinking Mode (Chain of Thought):**
-You can also enable the **AI Thinking Mode** from the settings. This allows the model to "think" out loud before returning the cleaned text, improving complex reasoning tasks. Please refer to the [Gemma on Gemini API docs](https://ai.google.dev/gemma/docs/core/gemma_on_gemini_api) for model compatibility, as some models natively support advanced thinking capabilities.
+*While OpenDictate offers an optional Cloud AI rewriting feature to fix grammar, the core transcription engine is entirely local, private, and independent of any internet connection.*
 
 ## 🚀 Key Features
 
-* **100% Local and Private**: Uses Whisper models running entirely on your local machine.
-* **Real-Time Chunk Transcription Engine**: Optimized audio chunk processing with VAD, low-latency streaming transcription, and optional real-time chunk analysis.
-* **Native GNOME Shell Extension (GNOME 45–51)**: Top panel control with live indicator statuses, model switching, and daemon status visualizer.
-* **AI Integration (Optional)**: Transcribe and rewrite your text using Google Gemini / Gemma models.
-* **Smart Window Focus Restoration**: Remembers the target application where dictation started and restores focus before pasting, avoiding cross-app paste errors when switching windows during transcription.
-* **Mid-Stage Cancellation**: Allows cancelling dictation immediately during audio capture, transcription, or LLM text cleaning stages.
-* **Smart Media Control (MPRIS)**: Automatically pauses your music or podcasts when you start recording and resumes when finished.
-* **Per-App Profiles**: Define specific copy/paste behaviors for each program (useful for terminal, code editors, or browsers).
-* **Floating Bubble**: Immediate visual feedback while you speak.
-* **OpenDeck Integration**: Native plugin with button & rotary dial (encoder) controls, custom Property Inspector settings, and profile switching.
+* **100% Local Voice Recognition**: Powered by localized Whisper models.
+* **Real-Time Chunk Engine**: Optimized audio chunk processing utilizing PyAudio and WebRTC VAD for low-latency streaming transcription and real-time visual feedback via an OSD (On-Screen Display) floating bubble.
+* **Universal DE Compatibility (X11 & Wayland)**:
+  * **GNOME (45–51)**: Native top panel extension for seamless Shell integration.
+  * **Other DEs (XFCE, Cinnamon, KDE)**: Dynamic system tray fallback utilizing `Gtk.StatusIcon` (XEmbed) for X11 environments to preserve native left-click record actions, and `AyatanaAppIndicator3` (StatusNotifierItem) for pure Wayland environments to prevent coordinate rendering bugs.
+* **Smart Window Focus Restoration**: Remembers the target X11/Wayland window (via `xdotool` / `ydotool`) where dictation initiated, restoring focus before pasting to prevent cross-app paste errors during multitasking.
+* **Smart Media Control**: Automatically hooks into MPRIS via DBus to pause your media players (Spotify, VLC, YouTube) when you speak, and resumes playback upon completion.
+* **Cloud-Independent Deck Integration (OpenDeck)**: Native plugin for OpenDeck (Stream Deck alternative). Control dictation via physical buttons and rotary encoders, featuring real-time visual feedback directly on the hardware keys.
+
+## 🧠 Optional Feature: AI Rewriting & App Profiles
+
+As an extra quality-of-life feature, OpenDictate allows piping the transcribed text through an LLM to fix homophones, grammar, and format the text based on context.
+
+* **Per-App AI Profiles**: Define specific System Prompts depending on the active window. You can instruct the AI to format output as Markdown when focused on Obsidian, or output pure Bash commands when focused on GNOME Terminal.
+* **Current Backend**: Google Gemini / Gemma API (Requires API Key). 
 
 ---
 
-## 🚀 Installation
+## 🏗️ Architecture & Technical Stack
 
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/KiruLab/opendictate.git
-   cd opendictate
-   ```
-2. Run the installation script:
-   ```bash
-   ./install.sh
-   ```
-   *The script will install the required Ubuntu dependencies (xdotool, wl-clipboard, libayatana, etc.), create a virtual environment in `~/.local/share/dictate-whisper` and download the Python packages.*
+OpenDictate is built on a decoupled Daemon-Client architecture communicating via a Unix Domain Socket (`/tmp/opendictate.socket`).
 
-3. You can find the app shortcut in your application drawer. Open it to access the Settings UI where you can configure your API Key, Whisper model, languages, and app profiles.
+* **Daemon (`opendictate-daemon.py`)**: Runs continuously in the background managing audio streams, loading the Whisper model into VRAM/RAM, and maintaining the GNOME extension state.
+* **Client (`opendictate-client.py`)**: A lightweight CLI trigger used to send IPC commands to the daemon.
+* **Core Libraries**:
+  * `faster-whisper`: Core inference engine.
+  * `PyGObject` (`gi.repository.Gtk`): UI settings, dialogs, and Tray management.
+  * `pycairo`: For rendering the transparent floating OSD feedback bubble.
+  * `pydbus`: MPRIS media control.
+  * `xdotool` / `ydotool` / `wl-clipboard`: Window management and clipboard injection.
 
 ---
 
-## 🧩 GNOME Shell Extension Status Indicators
+## 📦 Installation (Version 1.0)
 
-OpenDictate integrates directly into the GNOME Shell top panel (compatible with GNOME 45 through 51). The panel icon visually reflects the daemon's state in real time:
+### System-wide Debian Package (`.deb`)
+1. Download the `.deb` from the Releases page.
+2. Install it using `dpkg`:
+   ```bash
+   sudo dpkg -i opendictate_1.0.0_all.deb || sudo apt-get install -f -y
+   ```
+*(The package utilizes a `postinst` script to securely build a self-contained Python virtual environment in `/opt/opendictate/.venv`, preventing conflicts with system Python packages).*
 
-| State | Indicator | Description |
-| :--- | :---: | :--- |
-| **Active / Ready** | <img src="img/gnome_extension_active.png" height="28" alt="Active" /> | Daemon connected and ready for recording. |
-| **Recording** | <img src="img/gnome_extension_recording.png" height="28" alt="Recording" /> | Audio capture active; listening to input. |
-| **Paused** | <img src="img/gnome_extension_paused.png" height="28" alt="Paused" /> | Audio recording temporarily paused. |
-| **Processing** | <img src="img/gnome_extension_processing.png" height="28" alt="Processing" /> | Transcribing audio / AI rewriting in progress. |
-| **Deactivated / Off** | <img src="img/gnome_extension_deactivated.png" height="28" alt="Deactivated" /> | Extension or daemon disconnected/disabled. |
-
-To enable the extension after installation:
+### Local User Installation
+Installs only for your current user in `~/.local/`.
 ```bash
-gnome-extensions enable com.kirulab.dictate@kirulab.com
+git clone https://github.com/ThePartyAcolyte/opendictate.git
+cd opendictate
+./install.sh
 ```
 
 ---
 
-## ⚙️ Configuration Window
+## ⌨️ CLI / Global Shortcuts
 
-The settings window allows you to configure API keys, models, language, and per-app behavior profiles.
+Bind these to your DE's custom keyboard shortcuts.
 
-<p align="center">
-  <img src="img/config_1.png" width="48%" />
-  <img src="img/config_2.png" width="48%" />
-  <br>
-  <img src="img/config_3.png" width="48%" />
-  <img src="img/config_4.png" width="48%" />
-</p>
-
----
-
-## ⌨️ Usage with Keyboard Shortcuts (CLI)
-
-If you don't have a Stream Deck, you can control OpenDictate by assigning commands to your desktop environment's keyboard shortcuts (GNOME, KDE, Hyprland, etc.).
-
-Available commands using the `dictate` binary:
-
-| Command | Description |
+| Command | Action |
 |---------|-------------|
-| `dictate --toggle-record-send` | **(Recommended)** Starts recording, resumes if paused, or finishes and sends using the active AI config. |
-| `dictate --record` | Starts recording (or resumes if paused). |
-| `dictate --pause` | Pauses the current recording without sending. |
-| `dictate --cancel` | Cancels the current recording and discards the audio. |
-| `dictate --preview` | Stops the recording and keeps the text in the bubble for review. |
-| `dictate --send` | Simulates the "Enter" key after pasting the text. |
-| `dictate --toggle-ai` | Toggles the AI rewriting feature on or off. |
-| `dictate --toggle-autosend` | Toggles the global auto-send (automatic Enter). |
-| `dictate --toggle-autopause` | Toggles automatic pausing of media during recording. |
-| `dictate --toggle-bubble` | Hides/Shows the floating feedback bubble. |
+| `opendictate --toggle-record-send` | Push once to start recording. Push again to stop, apply optional cleaning, and inject text. |
+| `opendictate --record` | Starts recording (or resumes if paused). |
+| `opendictate --pause` | Pauses the current recording without sending. |
+| `opendictate --cancel` | Cancels the recording and discards the buffer. |
+| `opendictate --send` | Injects the current text and simulates an 'Enter' keypress. |
+| `opendictate --settings` | Opens the GTK Configuration UI. |
 
 ---
 
-## 🎛️ Usage with OpenDeck (Stream Deck)
+## 🛣️ Roadmap & Technical Debt
 
-OpenDictate includes a full plugin for **OpenDeck**, perfect for having physical buttons with real-time visual feedback.
-
-### OpenDeck Plugin Installation
-
-1. Make sure you have [OpenDeck](https://github.com/nekename/OpenDeck) installed and running.
-2. The `install.sh` script automatically copies the plugin to your OpenDeck configuration folder.
-3. **Restart the OpenDeck application**.
-4. In the OpenDeck configuration interface, look for the **"OpenDictate"** category.
-
-![OpenDeck Plugin UI](img/opendeck_ui.png)
-
-*Example using a Mirabox keypad:*
-![Mirabox Keypad](img/hardware_mirabox.jpg)
-
-### Available Actions in OpenDeck
-
-* **Record**: A dynamic button that changes color and state depending on whether you are recording, paused, or idle.
-* **Record Control (Encoder)**: Rotary dial action to control recording (Push to Record/Pause, Turn Right to Send, Turn Left to Cancel). Configurable via the Property Inspector (`inspector.html`) with options for rotational sensitivity threshold, double-tap, long-press actions, and page/profile switching.
-* **Cancel**: Cancels the ongoing recording at any stage.
-* **Send**: Finishes the recording and pastes the text (uses AI if enabled by the toggle).
-* **Monitor**: Button used to monitor daemon status in real time.
-* **Toggle Auto-Send**: Turns the global auto-send on or off.
-* **Toggle AI Cleaning**: Turns the AI rewriting feature on or off.
-* **Toggle Auto-Pause**: Turns automatic media pausing on or off.
-* **Toggle Bubble Visibility**: Turns the floating feedback bubble on or off.
-* **Preview (Review)**: Keeps the transcribed text in the bubble for review.
+- **Native Extensibility for non-GNOME DEs**: Replace the limited System Tray fallback by developing native panel widgets for other Desktop Environments (e.g., QML Plasmoids for KDE Plasma, CJS Applets for Cinnamon) to communicate natively with the Unix socket.
+- **Local LLM Backend**: Implement an offline backend (via Ollama or Llama.cpp) for the AI rewriting pipeline, allowing the optional grammar formatting feature to run 100% locally and maintain the absolute privacy philosophy.
 
 ---
 
 ## ⚖️ License and Credits
 
 * **License**: Released under the MIT License. Copyright (c) 2026 Kirulab / Tomás D. López.
-* The visual icons used in this application and the OpenDeck plugin were provided by [Icons8](https://icons8.com) under the Icons8 Free License.
-* Uses `faster-whisper` (MIT) and Google Gemini API (Apache 2.0).
+* Engine relies on `faster-whisper` (MIT).

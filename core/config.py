@@ -12,15 +12,26 @@ import logging
 import keyring
 from typing import Dict, Any, Optional, Tuple, List
 
-CONFIG_PATH = os.path.expanduser("~/.config/dictate-whisper/config.json")
+CONFIG_PATH = os.path.expanduser("~/.config/opendictate/config.json")
 DEFAULT_CONFIG: Dict[str, Any] = {
     "api_key": "",
-    "llm_enabled": False,
+    "ai_enabled": False,
     "model": "gemma-4-26b-a4b-it",
     "restore_window_focus": False,
+    "realtime_mode": True,
     "chunk_stride": 15.0,
     "chunk_overlap": 2.0,
-    "chunk_tolerance": 1.0
+    "chunk_tolerance": 1.0,
+    "bubble_mode": "auto",
+    "bubble_text_collapsed": False,
+    "hide_bubble": False,
+    "indicator_mode": "auto",
+    "use_appindicator": True,
+    "use_gnome_ext": True,
+    "check_updates": False,
+    "update_frequency": "monthly",
+    "last_update_check": 0,
+    "initial_setup_completed": False
 }
 
 
@@ -31,45 +42,71 @@ class ConfigManager:
         """Initialize base directory paths and ensure SQLite schema is created.
 
         Args:
-            base_dir: Custom base directory path. Defaults to ~/.local/share/dictate-whisper.
+            base_dir: Custom base directory path. Defaults to ~/.local/share/opendictate.
         """
-        self.base_dir = base_dir or os.path.expanduser("~/.local/share/dictate-whisper")
-        self.db_path = os.path.join(self.base_dir, "dictate.db")
+        self.base_dir = base_dir or os.path.expanduser("~/.local/share/opendictate")
+        self.db_path = os.path.join(self.base_dir, "opendictate.db")
         self.init_database()
 
     def init_database(self) -> None:
-        """Initialize the SQLite database schema for profiles, history, and settings."""
+        """Initialize the SQLite database schema and handle version migrations."""
         try:
             os.makedirs(self.base_dir, exist_ok=True)
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS app_profiles (
-                        app_class TEXT PRIMARY KEY,
-                        system_prompt TEXT,
-                        enable_vision BOOLEAN DEFAULT 0
-                    )
-                ''')
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS history (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        app_class TEXT,
-                        window_title TEXT,
-                        original_text TEXT,
-                        llm_text TEXT
-                    )
-                ''')
-                cursor.execute('''
-                    CREATE TABLE IF NOT EXISTS global_settings (
-                        key TEXT PRIMARY KEY,
-                        value TEXT
-                    )
-                ''')
+                cursor.execute("PRAGMA user_version")
+                current_version = cursor.fetchone()[0]
+
+                if current_version == 0:
+                    logging.info("Initializing new database schema (v1).")
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS app_profiles (
+                            app_class TEXT PRIMARY KEY,
+                            system_prompt TEXT,
+                            enable_vision BOOLEAN DEFAULT 0
+                        )
+                    ''')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS history (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            app_class TEXT,
+                            window_title TEXT,
+                            original_text TEXT,
+                            llm_text TEXT
+                        )
+                    ''')
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS global_settings (
+                            key TEXT PRIMARY KEY,
+                            value TEXT
+                        )
+                    ''')
+                    cursor.execute("PRAGMA user_version = 1")
+                elif current_version > 0:
+                    self._run_migrations(cursor, current_version)
+
                 conn.commit()
-            logging.info("SQLite database initialized successfully.")
+            logging.info(f"SQLite database ready (version {current_version if current_version > 0 else 1}).")
         except Exception as e:
             logging.error(f"Error initializing SQLite database: {e}", exc_info=True)
+
+    def _run_migrations(self, cursor: sqlite3.Cursor, current_version: int) -> None:
+        """Execute incremental structural migrations based on current schema version."""
+        target_version = 1
+        if current_version >= target_version:
+            return
+
+        logging.info(f"Migrating database from version {current_version} to {target_version}...")
+        
+        # Skeleton for future migrations:
+        # if current_version < 2:
+        #     logging.info("Applying migration v1 -> v2")
+        #     cursor.execute("ALTER TABLE history ADD COLUMN new_col TEXT")
+        #     current_version = 2
+        #     cursor.execute(f"PRAGMA user_version = {current_version}")
+        
+        logging.info("Database migration completed successfully.")
 
     def load_config(self) -> Dict[str, Any]:
         """Load global configuration settings from SQLite database and Keyring.

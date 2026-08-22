@@ -9,7 +9,7 @@ import socket
 import logging
 from typing import Callable, Dict
 
-SOCKET_PATH = "/tmp/dictate_daemon.socket"
+SOCKET_PATH = "/tmp/opendictate.socket"
 
 
 class IPCServer:

@@ -3,7 +3,7 @@
     {
       "Icon": "icons/monitor",
       "Name": "Monitor",
-      "UUID": "com.kirulab.dictate.monitor",
+      "UUID": "com.kirulab.opendictate.monitor",
       "States": [
         {
           "Image": "icons/monitor"
@@ -13,7 +13,7 @@
     {
       "Icon": "icons/record",
       "Name": "Record",
-      "UUID": "com.kirulab.dictate.record",
+      "UUID": "com.kirulab.opendictate.record",
       "States": [
         {
           "Name": "Idle",
@@ -32,7 +32,7 @@
     {
       "Icon": "icons/record",
       "Name": "Record Control (Encoder)",
-      "UUID": "com.kirulab.dictate.record_encoder",
+      "UUID": "com.kirulab.opendictate.record_encoder",
       "Controllers": ["Encoder"],
       "Encoder": {
         "TriggerDescription": {
@@ -59,7 +59,7 @@
     {
       "Icon": "icons/send_enabled",
       "Name": "Send",
-      "UUID": "com.kirulab.dictate.send",
+      "UUID": "com.kirulab.opendictate.send",
       "States": [
         {"Name": "Disabled", "Image": "icons/send_disabled"},
         {"Name": "Enabled", "Image": "icons/send_enabled"}
@@ -68,7 +68,7 @@
     {
       "Icon": "icons/cancel_enabled",
       "Name": "Cancel",
-      "UUID": "com.kirulab.dictate.cancel",
+      "UUID": "com.kirulab.opendictate.cancel",
       "States": [
         {"Name": "Disabled", "Image": "icons/cancel_disabled"},
         {"Name": "Enabled", "Image": "icons/cancel_enabled"}
@@ -77,7 +77,7 @@
     {
       "Icon": "icons/ai_on",
       "Name": "Toggle AI Cleaning",
-      "UUID": "com.kirulab.dictate.toggle_ai",
+      "UUID": "com.kirulab.opendictate.toggle_ai",
       "States": [
         {"Name": "Off", "Image": "icons/ai_off"},
         {"Name": "On", "Image": "icons/ai_on"}
@@ -85,18 +85,9 @@
 
     },
     {
-      "Icon": "icons/preview",
-      "Name": "Preview (Review)",
-      "UUID": "com.kirulab.dictate.preview",
-      "States": [
-        {"Name": "Disabled", "Image": "icons/preview"},
-        {"Name": "Enabled", "Image": "icons/preview"}
-      ]
-    },
-    {
       "Icon": "icons/autosend_on",
       "Name": "Toggle Auto-Send",
-      "UUID": "com.kirulab.dictate.toggle_autosend",
+      "UUID": "com.kirulab.opendictate.toggle_autosend",
       "States": [
         {"Name": "Off", "Image": "icons/autosend_off"},
         {"Name": "On", "Image": "icons/autosend_on"}
@@ -105,7 +96,7 @@
     {
       "Icon": "icons/media_pause_on",
       "Name": "Toggle Auto-Pause",
-      "UUID": "com.kirulab.dictate.toggle_autopause",
+      "UUID": "com.kirulab.opendictate.toggle_autopause",
       "States": [
         {"Name": "Off", "Image": "icons/media_pause_off"},
         {"Name": "On", "Image": "icons/media_pause_on"}
@@ -114,7 +105,7 @@
     {
       "Icon": "icons/bubble_on",
       "Name": "Toggle Bubble Visibility",
-      "UUID": "com.kirulab.dictate.toggle_bubble",
+      "UUID": "com.kirulab.opendictate.toggle_bubble",
       "States": [
         {"Name": "Off", "Image": "icons/bubble_off"},
         {"Name": "On", "Image": "icons/bubble_on"}
@@ -123,7 +114,7 @@
     {
       "Icon": "icons/realtime_on",
       "Name": "Toggle Real-Time Chunk Mode",
-      "UUID": "com.kirulab.dictate.toggle_realtime",
+      "UUID": "com.kirulab.opendictate.toggle_realtime",
       "States": [
         {"Name": "Off", "Image": "icons/realtime_off"},
         {"Name": "On", "Image": "icons/realtime_on"}
@@ -131,13 +122,13 @@
     }
   ],
   "Author": "Kirulab",
-  "Category": "OpenDictate",
+  "Category": "Utilities",
   "CategoryIcon": "icons/category",
   "CodePath": "start.sh",
-  "Description": "Control and monitor OpenDictate. Note: Requires the OpenDictate daemon to be installed. Download it from: https://github.com/KiruLab/opendictate",
+  "Description": "Control and monitor OpenDictate. Note: Requires the OpenDictate daemon to be installed. Download it from: https://github.com/ThePartyAcolyte/opendictate",
   "Name": "OpenDictate",
   "Icon": "icons/plugin",
-  "URL": "https://github.com/KiruLab/opendictate",
+  "URL": "https://github.com/ThePartyAcolyte/opendictate",
   "OS": [{"Platform": "linux", "MinimumVersion": "1.0"}],
   "Software": {"MinimumVersion": "5.0"},
   "Version": "1.0.0"

@@ -1,3 +1,9 @@
 .~lock.*
 __pycache__/
 .agents/
+build_deb/
+.venv/
+venv/
+*.deb
+*.pyc
+.vscode/
