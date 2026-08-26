@@ -17,8 +17,9 @@ All audio capture, Voice Activity Detection (VAD), and speech-to-text inference 
 
 ## 🚀 Key Features
 
-* **100% Local Voice Recognition**: Powered by localized Whisper models.
-* **Real-Time Chunk Engine**: Optimized audio chunk processing utilizing PyAudio and WebRTC VAD for low-latency streaming transcription and real-time visual feedback via an OSD (On-Screen Display) floating bubble.
+* **100% Local Voice Recognition**: Powered by localized Whisper models running on CPU/CUDA via `faster-whisper`.
+* **Adaptive VAD Dynamic Chunking**: Intelligent real-time voice activity detection that segments audio during natural conversational pauses (`0.6s` default), with continuous ambient noise floor tracking, retroactive boundary search, and energy-valley fallback to eliminate word truncation and hallucinations.
+* **Full Multi-Language Localization (`i18n`)**: 100% translated interface, tray menus, settings tabs, dialogs, and setup wizard in **English (`en`)**, **Spanish (`es`)**, **German (`de`)**, and **French (`fr`)**.
 * **Universal DE Compatibility (X11 & Wayland)**:
   * **GNOME (45–51)**: Native top panel extension for seamless Shell integration.
   * **Other DEs (XFCE, Cinnamon, KDE)**: Dynamic system tray fallback utilizing `Gtk.StatusIcon` (XEmbed) for X11 environments to preserve native left-click record actions, and `AyatanaAppIndicator3` (StatusNotifierItem) for pure Wayland environments to prevent coordinate rendering bugs.
@@ -50,13 +51,13 @@ OpenDictate is built on a decoupled Daemon-Client architecture communicating via
 
 ---
 
-## 📦 Installation (Version 1.0)
+## 📦 Installation (Version 1.1)
 
 ### System-wide Debian Package (`.deb`)
 1. Download the `.deb` from the Releases page.
 2. Install it using `dpkg`:
    ```bash
-   sudo dpkg -i opendictate_1.0.0_all.deb || sudo apt-get install -f -y
+   sudo dpkg -i opendictate_1.1.0_all.deb || sudo apt-get install -f -y
    ```
 *(The package utilizes a `postinst` script to securely build a self-contained Python virtual environment in `/opt/opendictate/.venv`, preventing conflicts with system Python packages).*
 
@@ -87,6 +88,7 @@ Bind these to your DE's custom keyboard shortcuts.
 
 ## 🛣️ Roadmap & Technical Debt
 
+- **GNOME Shell Extension Popup Menu Localization**: The context menu items in the top bar extension currently default to English/Spanish pending Gettext/GSettings integration.
 - **Native Extensibility for non-GNOME DEs**: Replace the limited System Tray fallback by developing native panel widgets for other Desktop Environments (e.g., QML Plasmoids for KDE Plasma, CJS Applets for Cinnamon) to communicate natively with the Unix socket.
 - **Local LLM Backend**: Implement an offline backend (via Ollama or Llama.cpp) for the AI rewriting pipeline, allowing the optional grammar formatting feature to run 100% locally and maintain the absolute privacy philosophy.
 
