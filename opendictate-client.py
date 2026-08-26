@@ -50,6 +50,37 @@ def main():
         s.sendall(cmd.encode('utf-8'))
         s.close()
     except Exception as e:
+        if cmd == "settings":
+            try:
+                import gi
+                gi.require_version('Gtk', '3.0')
+                from gi.repository import Gtk
+                from opendictate_config_ui import ConfigWindow
+                from core.config import CONFIG_PATH
+                db = os.path.expanduser("~/.local/share/opendictate/opendictate.db")
+                win = ConfigWindow(db, CONFIG_PATH)
+                win.connect("destroy", Gtk.main_quit)
+                Gtk.main()
+                sys.exit(0)
+            except Exception as ex:
+                print(f"Error opening settings window: {ex}")
+                sys.exit(1)
+        elif cmd == "wizard":
+            try:
+                import gi
+                gi.require_version('Gtk', '3.0')
+                from gi.repository import Gtk
+                from ui.wizard import FirstRunWizard
+                from core.config import CONFIG_PATH, ConfigManager
+                cm = ConfigManager()
+                cfg = cm.load_config()
+                win = FirstRunWizard(cfg, CONFIG_PATH, on_finish=cm.save_config)
+                win.connect("destroy", Gtk.main_quit)
+                Gtk.main()
+                sys.exit(0)
+            except Exception as ex:
+                print(f"Error opening wizard window: {ex}")
+                sys.exit(1)
         print(f"Error connecting to daemon: {e}")
         sys.exit(1)
 

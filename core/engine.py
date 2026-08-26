@@ -33,6 +33,9 @@ class WhisperEngine:
     def __init__(self) -> None:
         self.model = None
         self.model_size: str = "medium"
+        self.device: str = "auto"
+        self.compute_type: str = "default"
+        self.cpu_threads: int = 0
         self.lock = threading.Lock()
 
     @staticmethod
@@ -54,8 +57,8 @@ class WhisperEngine:
             candidates = [s for s in KNOWN_MODEL_SIZES if s != requested_size]
         return candidates
 
-    def load_model(self, size: str) -> Tuple[bool, Optional[str], str]:
-        """Load Faster-Whisper model with multi-tier fallback resolution.
+    def load_model(self, size: str, config: Optional[Dict[str, Any]] = None) -> Tuple[bool, Optional[str], str]:
+        """Load Faster-Whisper model with multi-tier fallback resolution and hardware backend config.
 
         Sequence:
         1. Attempt local cached load for requested model (local_files_only=True).
@@ -65,6 +68,7 @@ class WhisperEngine:
 
         Args:
             size: Model size name (e.g. tiny, base, small, medium, large-v3).
+            config: Optional configuration dictionary for backend options (device, compute_type, cpu_threads).
 
         Returns:
             Tuple of (success: bool, loaded_model_name: Optional[str], status_code: str).
@@ -77,35 +81,55 @@ class WhisperEngine:
             logging.error(f"Failed to import faster_whisper: {err}", exc_info=True)
             return False, None, "failed_no_models"
 
+        requested_device = config.get("whisper_device", "auto") if config else "auto"
+        requested_compute = config.get("whisper_compute_type", "default") if config else "default"
+        cpu_threads = int(config.get("whisper_cpu_threads", 0)) if config else 0
+
+        # Build list of devices to try: first requested, then cpu fallback if requested != "cpu"
+        devices_to_try = [requested_device]
+        if requested_device != "cpu":
+            devices_to_try.append("cpu")
+
         with self.lock:
-            # 1. Attempt local load of requested model
-            try:
-                logging.info(f"Attempting local load for requested model '{size}'...")
-                self.model = WhisperModel(size, device="auto", compute_type="default", local_files_only=True)
-                self.model_size = size
-                logging.info(f"Faster-Whisper model '{size}' loaded from local cache.")
-                return True, size, "loaded_local"
-            except Exception as local_err:
-                logging.info(f"Local load failed for '{size}' ({local_err}). Checking remote download...")
+            for dev in devices_to_try:
+                comp = requested_compute if dev == requested_device else "default"
+                logging.info(f"Attempting to load model '{size}' on device='{dev}' (compute_type='{comp}', cpu_threads={cpu_threads})...")
 
-            # 2. Attempt remote download of requested model
-            try:
-                logging.info(f"Attempting remote download and load for '{size}'...")
-                self.model = WhisperModel(size, device="auto", compute_type="default", local_files_only=False)
-                self.model_size = size
-                logging.info(f"Faster-Whisper model '{size}' successfully downloaded and loaded.")
-                return True, size, "downloaded"
-            except Exception as download_err:
-                logging.warning(f"Remote download failed for '{size}' ({download_err}). Initiating local fallback search...")
+                # 1. Attempt local load of requested model
+                try:
+                    self.model = WhisperModel(size, device=dev, compute_type=comp, cpu_threads=cpu_threads, local_files_only=True)
+                    self.model_size = size
+                    self.device = dev
+                    self.compute_type = comp
+                    self.cpu_threads = cpu_threads
+                    logging.info(f"Faster-Whisper model '{size}' loaded from local cache on device '{dev}'.")
+                    return True, size, "loaded_local"
+                except Exception as local_err:
+                    logging.info(f"Local load on '{dev}' failed for '{size}' ({local_err}). Checking remote download...")
 
-            # 3. Fallback to any other locally available model
+                # 2. Attempt remote download of requested model
+                try:
+                    self.model = WhisperModel(size, device=dev, compute_type=comp, cpu_threads=cpu_threads, local_files_only=False)
+                    self.model_size = size
+                    self.device = dev
+                    self.compute_type = comp
+                    self.cpu_threads = cpu_threads
+                    logging.info(f"Faster-Whisper model '{size}' successfully downloaded and loaded on device '{dev}'.")
+                    return True, size, "downloaded"
+                except Exception as download_err:
+                    logging.warning(f"Remote download/load on '{dev}' failed for '{size}' ({download_err}).")
+
+            # 3. Fallback candidates search on CPU
             candidates = self._get_fallback_candidates(size)
             for candidate in candidates:
                 try:
-                    logging.info(f"Attempting local fallback to '{candidate}'...")
-                    self.model = WhisperModel(candidate, device="auto", compute_type="default", local_files_only=True)
+                    logging.info(f"Attempting local fallback to '{candidate}' on device 'cpu'...")
+                    self.model = WhisperModel(candidate, device="cpu", compute_type="default", cpu_threads=cpu_threads, local_files_only=True)
                     self.model_size = candidate
-                    logging.info(f"Faster-Whisper fallback model '{candidate}' loaded from local cache.")
+                    self.device = "cpu"
+                    self.compute_type = "default"
+                    self.cpu_threads = cpu_threads
+                    logging.info(f"Faster-Whisper fallback model '{candidate}' loaded on 'cpu' from local cache.")
                     return True, candidate, "fallback_local"
                 except Exception:
                     continue
@@ -121,11 +145,11 @@ class WhisperEngine:
         config: Dict[str, Any],
         initial_prompt: Optional[str] = None
     ) -> Any:
-        """Execute Faster-Whisper transcription on a float32 audio array.
+        """Execute Faster-Whisper transcription on a float32 audio array with expert tuning parameters.
 
         Args:
             audio_float32: Normalized 16kHz float32 audio sample array.
-            config: Configuration dictionary.
+            config: Configuration dictionary containing inference and VAD settings.
             initial_prompt: Optional previous text context.
 
         Returns:
@@ -134,11 +158,30 @@ class WhisperEngine:
         if not self.model:
             raise RuntimeError("Faster-Whisper model is not loaded.")
 
+        vad_filter = config.get("vad_filter", False)
         kwargs: Dict[str, Any] = {
-            "beam_size": config.get("beam_size", 5),
+            "beam_size": int(config.get("beam_size", 5)),
+            "patience": float(config.get("beam_patience", 1.0)),
+            "length_penalty": float(config.get("length_penalty", 1.0)),
+            "repetition_penalty": float(config.get("repetition_penalty", 1.1)),
+            "no_repeat_ngram_size": int(config.get("no_repeat_ngram_size", 0)),
+            "condition_on_previous_text": bool(config.get("condition_on_previous_text", True)),
             "word_timestamps": True,
-            "vad_filter": config.get("vad_filter", False)
+            "vad_filter": vad_filter
         }
+
+        silence_thresh = float(config.get("hallucination_silence_threshold", 2.0))
+        if silence_thresh > 0.0:
+            kwargs["hallucination_silence_threshold"] = silence_thresh
+
+        if vad_filter:
+            vad_params = {
+                "threshold": float(config.get("vad_threshold", 0.5)),
+                "min_speech_duration_ms": int(config.get("vad_min_speech_duration_ms", 250)),
+                "min_silence_duration_ms": int(config.get("vad_min_silence_duration_ms", 2000)),
+                "speech_pad_ms": int(config.get("vad_speech_pad_ms", 400)),
+            }
+            kwargs["vad_parameters"] = vad_params
 
         if initial_prompt:
             kwargs["initial_prompt"] = initial_prompt
@@ -147,11 +190,17 @@ class WhisperEngine:
         if lang != "auto":
             kwargs["language"] = lang
 
-        temp = config.get("temperature", 0.0)
-        if temp == 0.0:
+        temp = float(config.get("temperature", 0.0))
+        if temp <= 0.0:
             kwargs["temperature"] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
         else:
-            kwargs["temperature"] = temp
+            # Dynamic fallback ladder starting at user temperature up to 1.0
+            fallback_ladder = [temp]
+            curr = round(temp + 0.2, 2)
+            while curr <= 1.0:
+                fallback_ladder.append(curr)
+                curr = round(curr + 0.2, 2)
+            kwargs["temperature"] = fallback_ladder if len(fallback_ladder) > 1 else temp
 
         with self.lock:
             segments_gen, info = self.model.transcribe(audio_float32, **kwargs)

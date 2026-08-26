@@ -16,7 +16,7 @@ echo "📄 Copiando archivos de la aplicación..."
 if [ -d "$INSTALL_DIR" ]; then
     echo "🧹 Limpiando archivos de código fuente previos..."
     find "$INSTALL_DIR" -maxdepth 1 -type f -name "*.py" -delete
-    rm -rf "$INSTALL_DIR/core" "$INSTALL_DIR/ui" "$INSTALL_DIR/plugins" "$INSTALL_DIR/img"
+    rm -rf "$INSTALL_DIR/core" "$INSTALL_DIR/ui" "$INSTALL_DIR/plugins" "$INSTALL_DIR/img" "$INSTALL_DIR/i18n"
 fi
 mkdir -p "$INSTALL_DIR"
 cp opendictate-daemon.py "$INSTALL_DIR/"
@@ -24,6 +24,7 @@ cp opendictate-client.py "$INSTALL_DIR/"
 cp opendictate_config_ui.py "$INSTALL_DIR/"
 cp launch_wizard.py "$INSTALL_DIR/"
 cp i18n.py "$INSTALL_DIR/"
+cp -r i18n "$INSTALL_DIR/"
 cp -r core "$INSTALL_DIR/"
 cp -r ui "$INSTALL_DIR/"
 cp -r plugins "$INSTALL_DIR/"
@@ -32,6 +33,11 @@ cp -r img "$INSTALL_DIR/"
 echo "🧩 Desplegando Extensión de GNOME Shell..."
 mkdir -p "$GNOME_EXT_DIR"
 cp -r gnome-extension/com.kirulab.opendictate@kirulab.com/* "$GNOME_EXT_DIR/"
+if command -v gnome-extensions &> /dev/null; then
+    gnome-extensions disable "com.kirulab.opendictate@kirulab.com" 2>/dev/null || true
+    sleep 0.5
+    gnome-extensions enable "com.kirulab.opendictate@kirulab.com" 2>/dev/null || true
+fi
 
 if [ -d "$HOME/.config/opendeck" ]; then
     echo "📦 Desplegando Plugin para OpenDeck..."
@@ -91,7 +97,12 @@ sleep 1
 
 export DISPLAY="${DISPLAY:-:0}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
-nohup "$VENV_DIR/bin/python" "$INSTALL_DIR/opendictate-daemon.py" --force-start >/dev/null 2>&1 &
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/1000}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/1000/bus}"
+nohup "$VENV_DIR/bin/python" -u "$INSTALL_DIR/opendictate-daemon.py" --force-start > "$INSTALL_DIR/opendictate.log" 2>&1 &
+DAEMON_PID=$!
+disown $DAEMON_PID
+sleep 2
 
 echo "✅ Instalación y despliegue completados exitosamente."
 echo ""

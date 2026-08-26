@@ -42,6 +42,7 @@ from i18n import get_translator
 from core.config import ConfigManager, CONFIG_PATH
 from core.audio import AudioRecorder
 from core.engine import WhisperEngine
+from core.vad import VADStreamSegmenter
 from core.llm import LLMService
 from core.mpris import MediaController
 from core.ipc import IPCServer, SOCKET_PATH
@@ -60,6 +61,7 @@ class DictationDaemon:
 
         self.audio = AudioRecorder()
         self.engine = WhisperEngine()
+        self.vad_segmenter = VADStreamSegmenter(config=self.config)
         self.llm = LLMService(self.config_manager)
         self.media = MediaController()
 
@@ -69,11 +71,13 @@ class DictationDaemon:
         self.current_text: str = ""
         self.confirmed_text: str = ""
         self.last_transcribed_time: float = 0.0
+        self.transcribe_lock = threading.Lock()
 
         self.start_time: float = 0.0
         self.pause_start_time: float = 0.0
         self.total_paused_time: float = 0.0
         self.processing_start_time: float = 0.0
+        self._last_state_export_time: float = 0.0
         self.timer_id: Optional[int] = None
         self.config_window = None
 
@@ -117,6 +121,7 @@ class DictationDaemon:
             "quit": lambda: GLib.idle_add(self.quit_app),
             "settings": lambda: GLib.idle_add(self.open_config_window),
             "wizard": lambda: GLib.idle_add(self.open_wizard_window),
+            "reload-config": lambda: GLib.idle_add(self.on_config_saved),
         }
         self.ipc = IPCServer(self.ipc_handlers)
         threading.Thread(target=self.ipc.start, daemon=True).start()
@@ -153,8 +158,13 @@ class DictationDaemon:
         if os.path.exists(sound_path):
             subprocess.Popen(["pw-play", sound_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-    def export_state(self) -> None:
+    def export_state(self, force: bool = True) -> None:
         """Export state telemetry to /tmp/opendictate_state.json for GNOME extension / OpenDeck."""
+        now = time.time()
+        if not force and (now - self._last_state_export_time < 0.1):
+            return
+        self._last_state_export_time = now
+
         status_key_map = {
             "RECORDING": "recording",
             "PAUSED": "paused",
@@ -190,17 +200,25 @@ class DictationDaemon:
             "total_paused_time": self.total_paused_time
         }
         try:
-            with open("/tmp/opendictate_state.json", "w") as f:
+            tmp_path = "/tmp/opendictate_state.json.tmp"
+            with open(tmp_path, "w") as f:
                 json.dump(state_data, f)
+            os.replace(tmp_path, "/tmp/opendictate_state.json")
         except Exception as e:
             logging.error(f"Error exporting state JSON: {e}")
 
     def quit_app(self) -> None:
         """Export OFFLINE state telemetry and exit application."""
         try:
-            state_data = {"state": "OFFLINE", "status_text": "Offline"}
-            with open("/tmp/opendictate_state.json", "w") as f:
+            state_data = {
+                "state": "OFFLINE",
+                "status_text": "Offline",
+                "ui_language": self.config.get("ui_language", "en")
+            }
+            tmp_path = "/tmp/opendictate_state.json.tmp"
+            with open(tmp_path, "w") as f:
                 json.dump(state_data, f)
+            os.replace(tmp_path, "/tmp/opendictate_state.json")
         except Exception as e:
             logging.error(f"Error exporting OFFLINE state: {e}")
         Gtk.main_quit()
@@ -215,7 +233,7 @@ class DictationDaemon:
         self.export_state()
 
         def _loader():
-            success, loaded_size, status_code = self.engine.load_model(size)
+            success, loaded_size, status_code = self.engine.load_model(size, self.config)
             if success and loaded_size:
                 self.config["whisper_model_size"] = loaded_size
                 self.config_manager.save_config(self.config)
@@ -283,6 +301,8 @@ class DictationDaemon:
         self.pause_start_time = 0
         self.confirmed_text = ""
         self.last_transcribed_time = 0.0
+        self.vad_segmenter.reset()
+        self.vad_segmenter.update_config(self.config)
 
         self.resolve_bubble_mode()
         if not self.config.get("hide_bubble", False):
@@ -297,7 +317,8 @@ class DictationDaemon:
         self.audio.start_recording()
         threading.Thread(target=self._audio_stream_loop, daemon=True).start()
         if self.config.get("realtime_mode", True):
-            threading.Thread(target=self._streaming_transcriber_loop, daemon=True).start()
+            self.streaming_thread = threading.Thread(target=self._streaming_transcriber_loop, daemon=True)
+            self.streaming_thread.start()
 
     def _audio_stream_loop(self) -> None:
         """Audio streaming thread reading PCM buffers from process stdout."""
@@ -305,27 +326,35 @@ class DictationDaemon:
             success = self.audio.process_stream_chunk(
                 chunk_size=1024,
                 is_paused=(self.state == "PAUSED"),
-                on_level_update=lambda lvl: (self.export_state(), GLib.idle_add(self.bubble.update_audio_level, lvl))
+                on_level_update=lambda lvl: (self.export_state(force=False), GLib.idle_add(self.bubble.update_audio_level, lvl))
             )
             if not success:
                 break
 
     def _streaming_transcriber_loop(self) -> None:
-        """Sliding-window transcription thread running during real-time recording."""
-        stride = self.config.get("chunk_stride", 15.0)
-        overlap = self.config.get("chunk_overlap", 2.0)
-        tolerance = self.config.get("chunk_tolerance", 1.0)
+        """Adaptive VAD-based transcription thread running during real-time recording."""
         bytes_per_sec = 16000 * 2
+        last_vad_byte_offset = 0
 
         while self.state in ["RECORDING", "PAUSED"]:
             if self.state == "PAUSED":
-                time.sleep(0.2)
+                time.sleep(0.1)
                 continue
 
-            current_time = len(self.audio.audio_buffer) / bytes_per_sec
-            if current_time >= self.last_transcribed_time + stride:
-                chunk_start = max(0.0, self.last_transcribed_time - overlap)
-                chunk_end = min(current_time, chunk_start + stride + overlap)
+            current_buffer_len = len(self.audio.audio_buffer)
+
+            # Ingest newly captured PCM bytes into VAD segmenter
+            if current_buffer_len > last_vad_byte_offset:
+                new_pcm = bytes(self.audio.audio_buffer[last_vad_byte_offset:current_buffer_len])
+                self.vad_segmenter.process_pcm_chunk(new_pcm)
+                last_vad_byte_offset = current_buffer_len
+
+            current_time = current_buffer_len / bytes_per_sec
+            cut_point = self.vad_segmenter.find_cut_point(current_time, self.last_transcribed_time)
+
+            if cut_point is not None and cut_point > self.last_transcribed_time:
+                chunk_start = self.last_transcribed_time
+                chunk_end = cut_point
 
                 start_idx = int(chunk_start * bytes_per_sec)
                 end_idx = int(chunk_end * bytes_per_sec)
@@ -334,48 +363,36 @@ class DictationDaemon:
                 if len(chunk_bytes) % 2 != 0:
                     chunk_bytes = chunk_bytes[:-1]
 
-                try:
-                    audio_int16 = np.frombuffer(chunk_bytes, dtype=np.int16)
-                    audio_float32 = audio_int16.astype(np.float32) / 32768.0
+                if len(chunk_bytes) >= 16000:  # Minimum 0.5s audio slice
+                    try:
+                        audio_int16 = np.frombuffer(chunk_bytes, dtype=np.int16)
+                        audio_float32 = audio_int16.astype(np.float32) / 32768.0
 
-                    prompt = self.confirmed_text[-200:] if self.confirmed_text else None
-                    t_start = time.perf_counter()
-                    segments, _ = self.engine.transcribe_chunk(audio_float32, self.config, initial_prompt=prompt)
-                    t_transcribe = time.perf_counter() - t_start
+                        with self.transcribe_lock:
+                            prompt = self.confirmed_text[-200:] if self.confirmed_text else None
+                            t_start = time.perf_counter()
+                            segments, _ = self.engine.transcribe_chunk(audio_float32, self.config, initial_prompt=prompt)
+                            t_transcribe = time.perf_counter() - t_start
 
-                    chunk_text = ""
-                    for segment in segments:
-                        if segment.words:
-                            for word in segment.words:
-                                abs_time = chunk_start + word.start
-                                if abs_time < (chunk_end - overlap):
-                                    chunk_text += word.word
-                        else:
-                            chunk_text += segment.text
-                    
-                    text_to_append = self._merge_chunk_text(
-                        chunk_text=chunk_text,
-                        confirmed_text=self.confirmed_text,
-                        segments=segments,
-                        chunk_start=chunk_start,
-                        last_transcribed_time=self.last_transcribed_time,
-                        tolerance=tolerance,
-                        chunk_end=chunk_end,
-                        overlap=overlap,
-                        label="streaming"
-                    )
-                    logging.info(f"Chunk transcribed in {t_transcribe:.2f}s | Audio len: {chunk_end - chunk_start:.2f}s | Appended chars: {len(text_to_append)}")
+                            chunk_text = "".join(seg.text for seg in segments).strip()
 
-                    if text_to_append and self.state == "RECORDING":
-                        self.confirmed_text += text_to_append
-                        GLib.idle_add(self.bubble.set_live_text, self.confirmed_text)
+                            if chunk_text and self.state in ["RECORDING", "TRANSCRIBING"]:
+                                if self.confirmed_text and not self.confirmed_text.endswith(" ") and not chunk_text.startswith(" "):
+                                    self.confirmed_text += " "
+                                self.confirmed_text += chunk_text
+                                GLib.idle_add(self.bubble.set_live_text, self.confirmed_text)
 
-                    if self.state == "RECORDING":
-                        self.last_transcribed_time = chunk_end - overlap
-                except Exception as e:
-                    logging.error(f"Streaming transcription error: {e}", exc_info=True)
+                            self.last_transcribed_time = chunk_end
+                            self.vad_segmenter.advance_cut(chunk_end)
+                            logging.info(
+                                f"VAD chunk transcribed in {t_transcribe:.2f}s | "
+                                f"Audio: [{chunk_start:.2f}s -> {chunk_end:.2f}s] ({chunk_end - chunk_start:.2f}s) | "
+                                f"Text: '{chunk_text}'"
+                            )
+                    except Exception as e:
+                        logging.error(f"Streaming transcription error: {e}", exc_info=True)
 
-            time.sleep(0.5)
+            time.sleep(0.1)
 
     def stop_recording(self) -> None:
         """Stop audio recording and initiate STT decoding."""
@@ -453,65 +470,58 @@ class DictationDaemon:
 
 
     def _final_transcribe_loop(self) -> None:
-        """Execute final transcription pass (full-batch or final chunk)."""
+        """Execute final transcription pass (full-batch or remaining audio tail)."""
+        if hasattr(self, 'streaming_thread') and self.streaming_thread and self.streaming_thread.is_alive():
+            logging.info("Waiting for streaming loop to finish current chunk...")
+            self.streaming_thread.join()
+
         try:
             bytes_per_sec = 16000 * 2
             current_audio_time = len(self.audio.audio_buffer) / bytes_per_sec
 
-            if not self.config.get("realtime_mode", True):
-                logging.info("Executing full audio batch transcription...")
-                chunk_bytes = bytes(self.audio.audio_buffer)
-                if len(chunk_bytes) % 2 != 0:
-                    chunk_bytes = chunk_bytes[:-1]
-
-                audio_int16 = np.frombuffer(chunk_bytes, dtype=np.int16)
-                audio_float32 = audio_int16.astype(np.float32) / 32768.0
-
-                segments, _ = self.engine.transcribe_chunk(audio_float32, self.config)
-                full_text = ""
-                for segment in segments:
-                    full_text += segment.text
-                self.confirmed_text = full_text
-            else:
-                overlap = self.config.get("chunk_overlap", 2.0)
-                tolerance = self.config.get("chunk_tolerance", 1.0)
-                if current_audio_time > self.last_transcribed_time:
-                    chunk_start = max(0.0, self.last_transcribed_time - overlap)
-                    start_idx = int(chunk_start * bytes_per_sec)
-                    chunk_bytes = bytes(self.audio.audio_buffer[start_idx:])
+            with self.transcribe_lock:
+                if not self.config.get("realtime_mode", True):
+                    logging.info("Executing full audio batch transcription...")
+                    chunk_bytes = bytes(self.audio.audio_buffer)
                     if len(chunk_bytes) % 2 != 0:
                         chunk_bytes = chunk_bytes[:-1]
 
-                    audio_int16 = np.frombuffer(chunk_bytes, dtype=np.int16)
-                    audio_float32 = audio_int16.astype(np.float32) / 32768.0
+                    if chunk_bytes:
+                        audio_int16 = np.frombuffer(chunk_bytes, dtype=np.int16)
+                        audio_float32 = audio_int16.astype(np.float32) / 32768.0
 
-                    prompt = self.confirmed_text[-200:] if self.confirmed_text else None
-                    t_start = time.perf_counter()
-                    segments, _ = self.engine.transcribe_chunk(audio_float32, self.config, initial_prompt=prompt)
-                    t_transcribe = time.perf_counter() - t_start
+                        segments, _ = self.engine.transcribe_chunk(audio_float32, self.config)
+                        full_text = "".join(seg.text for seg in segments).strip()
+                        self.confirmed_text = full_text
+                else:
+                    remaining_duration = current_audio_time - self.last_transcribed_time
+                    if remaining_duration > 0.25:
+                        start_idx = int(self.last_transcribed_time * bytes_per_sec)
+                        chunk_bytes = bytes(self.audio.audio_buffer[start_idx:])
+                        if len(chunk_bytes) % 2 != 0:
+                            chunk_bytes = chunk_bytes[:-1]
 
-                    chunk_text = ""
-                    for segment in segments:
-                        if segment.words:
-                            for word in segment.words:
-                                chunk_text += word.word
-                        else:
-                            chunk_text += segment.text
+                        if chunk_bytes:
+                            audio_int16 = np.frombuffer(chunk_bytes, dtype=np.int16)
+                            audio_float32 = audio_int16.astype(np.float32) / 32768.0
 
-                    text_to_append = self._merge_chunk_text(
-                        chunk_text=chunk_text,
-                        confirmed_text=self.confirmed_text,
-                        segments=segments,
-                        chunk_start=chunk_start,
-                        last_transcribed_time=self.last_transcribed_time,
-                        tolerance=tolerance,
-                        chunk_end=current_audio_time,
-                        overlap=0.0,
-                        label="final"
-                    )
-                    logging.info(f"Final chunk transcribed in {t_transcribe:.2f}s | Audio len: {current_audio_time - chunk_start:.2f}s | Appended chars: {len(text_to_append)}")
-                    if text_to_append:
-                        self.confirmed_text += text_to_append
+                            prompt = self.confirmed_text[-200:] if self.confirmed_text else None
+                            t_start = time.perf_counter()
+                            segments, _ = self.engine.transcribe_chunk(audio_float32, self.config, initial_prompt=prompt)
+                            t_transcribe = time.perf_counter() - t_start
+
+                            chunk_text = "".join(seg.text for seg in segments).strip()
+                            if chunk_text:
+                                if self.confirmed_text and not self.confirmed_text.endswith(" ") and not chunk_text.startswith(" "):
+                                    self.confirmed_text += " "
+                                self.confirmed_text += chunk_text
+
+                            logging.info(
+                                f"Final audio tail transcribed in {t_transcribe:.2f}s | "
+                                f"Audio: [{self.last_transcribed_time:.2f}s -> {current_audio_time:.2f}s] ({remaining_duration:.2f}s) | "
+                                f"Text: '{chunk_text}'"
+                            )
+                            self.last_transcribed_time = current_audio_time
 
             final_text = self.confirmed_text.strip()
             logging.info(f"Final transcript text: '{final_text}'")
@@ -802,6 +812,10 @@ class DictationDaemon:
 
     def on_config_saved(self, new_config: Optional[Dict[str, Any]] = None) -> None:
         old_model = self.engine.model_size
+        old_device = self.engine.device
+        old_compute = self.engine.compute_type
+        old_threads = self.engine.cpu_threads
+
         if new_config is not None:
             self.config = new_config
             self.config_manager.save_config(self.config)
@@ -818,8 +832,18 @@ class DictationDaemon:
         self.tray.build_menu()
 
         self.export_state()
-        new_model = self.config.get("whisper_model_size")
-        if old_model and new_model and old_model != new_model and self.state == "IDLE":
+
+        new_model = self.config.get("whisper_model_size", old_model)
+        new_device = self.config.get("whisper_device", "auto")
+        new_compute = self.config.get("whisper_compute_type", "default")
+        new_threads = int(self.config.get("whisper_cpu_threads", 0))
+
+        backend_changed = (
+            old_device != new_device or
+            old_compute != new_compute or
+            old_threads != new_threads
+        )
+        if (old_model != new_model or backend_changed) and self.state == "IDLE":
             self.load_model_async(new_model)
 
 

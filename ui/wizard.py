@@ -363,10 +363,10 @@ class FirstRunWizard(Gtk.Window):
         cuda_ready = self.gpu_info.get("cuda_ready", False)
 
         if has_gpu and cuda_ready:
-            gpu_badge_text = f"⚡ {gpu_name} (CUDA Acelerado)"
+            gpu_badge_text = self.i18n.t("wizard_badge_cuda_accelerated", gpu_name)
             gpu_badge_class = "diag-badge-gpu"
         elif has_gpu:
-            gpu_badge_text = f"⚠️ {gpu_name} (Modo CPU)"
+            gpu_badge_text = self.i18n.t("wizard_badge_cpu_mode", gpu_name)
             gpu_badge_class = "diag-badge"
         else:
             gpu_badge_text = f"⚙️ {gpu_name}"
@@ -595,7 +595,7 @@ class FirstRunWizard(Gtk.Window):
         card_od.get_style_context().add_class("wizard-card")
 
         od_title = Gtk.Label(xalign=0)
-        od_title.set_markup("<b>Hardware Físico: Plugin para OpenDeck / Stream Deck</b>")
+        od_title.set_markup(f"<b>{GLib.markup_escape_text(self.i18n.t('wizard_opendeck_hardware_title'))}</b>")
         card_od.pack_start(od_title, False, False, 0)
 
         opendeck_dir = os.path.expanduser("~/.config/opendeck")
@@ -626,13 +626,13 @@ class FirstRunWizard(Gtk.Window):
         card_cli.pack_start(cli_title, False, False, 0)
 
         cli_commands = [
-            ("opendictate --toggle-record-send", "Alternar grabación / envío (Recomendado)"),
-            ("opendictate --settings", "Abrir ventana de Ajustes y Configuración"),
-            ("opendictate --record", "Grabar / Pausar"),
-            ("opendictate --cancel", "Cancelar"),
-            ("opendictate --send", "Enviar texto manualmente"),
-            ("opendictate --finish-normal", "Forzar inserción normal"),
-            ("opendictate --finish-ai", "Forzar inserción con IA"),
+            ("opendictate --toggle-record-send", self.i18n.t("cli_desc_toggle_record_send")),
+            ("opendictate --settings", self.i18n.t("cli_desc_settings")),
+            ("opendictate --record", self.i18n.t("cli_desc_record")),
+            ("opendictate --cancel", self.i18n.t("cli_desc_cancel")),
+            ("opendictate --send", self.i18n.t("cli_desc_send")),
+            ("opendictate --finish-normal", self.i18n.t("cli_desc_finish_normal")),
+            ("opendictate --finish-ai", self.i18n.t("cli_desc_finish_ai")),
         ]
 
         for cmd, desc in cli_commands:
@@ -869,7 +869,7 @@ class FirstRunWizard(Gtk.Window):
 
         # Check updates
         cu_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        cu_lbl = Gtk.Label(label="Buscar actualizaciones automáticamente", xalign=0)
+        cu_lbl = Gtk.Label(label=self.i18n.t("lbl_check_updates"), xalign=0)
         cu_hbox.pack_start(cu_lbl, True, True, 0)
         self.check_updates_switch = Gtk.Switch()
         self.check_updates_switch.set_active(self.config.get("check_updates", False))
@@ -878,14 +878,14 @@ class FirstRunWizard(Gtk.Window):
 
         # Update frequency
         uf_hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        uf_lbl = Gtk.Label(label="Frecuencia", xalign=0)
+        uf_lbl = Gtk.Label(label=self.i18n.t("lbl_update_frequency"), xalign=0)
         uf_lbl.set_margin_start(16)
         uf_lbl.get_style_context().add_class("row-subtitle")
         uf_hbox.pack_start(uf_lbl, True, True, 0)
         self.update_freq_combo = Gtk.ComboBoxText()
-        self.update_freq_combo.append("daily", "Diariamente")
-        self.update_freq_combo.append("weekly", "Semanalmente")
-        self.update_freq_combo.append("monthly", "Mensualmente")
+        self.update_freq_combo.append("daily", self.i18n.t("freq_daily"))
+        self.update_freq_combo.append("weekly", self.i18n.t("freq_weekly"))
+        self.update_freq_combo.append("monthly", self.i18n.t("freq_monthly"))
         self.update_freq_combo.set_active_id(self.config.get("update_frequency", "monthly"))
         self.update_freq_combo.set_sensitive(self.check_updates_switch.get_active())
         uf_hbox.pack_end(self.update_freq_combo, False, False, 0)
@@ -970,7 +970,7 @@ class FirstRunWizard(Gtk.Window):
                 )
                 dlg.run()
                 dlg.destroy()
-                btn.set_label("✅ Plugin Instalado")
+                btn.set_label(self.i18n.t("wizard_plugin_installed_btn"))
                 btn.set_sensitive(False)
         except Exception as e:
             btn.set_label(f"Error: {e}")

@@ -19,6 +19,8 @@ import re
 import shutil
 from typing import Dict, Any, Optional, Callable, Tuple, List
 from i18n import get_translator
+from core.config import ConfigManager
+from core.hardware import detect_desktop_environment, is_cuda_runtime_ready, get_cpu_core_count, get_supported_compute_types
 
 
 SETTINGS_CSS = b"""
@@ -384,6 +386,7 @@ class ConfigWindow(Gtk.Window):
         self.on_config_saved = on_config_saved
         self.daemon_ref = daemon_ref
         
+        self.config_manager = ConfigManager()
         self.config = self.load_config()
         self.i18n = get_translator(self.config.get("ui_language", "en"))
         
@@ -396,7 +399,9 @@ class ConfigWindow(Gtk.Window):
         self.connect("delete-event", self.on_delete_event)
         
         self._apply_css()
+        self._build_ui()
 
+    def _build_ui(self) -> None:
         main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self.add(main_box)
 
@@ -422,7 +427,56 @@ class ConfigWindow(Gtk.Window):
         general_scroll.add(general_box)
         self.stack.add_titled(general_scroll, "general", self.i18n.t("tab_general"))
 
-        # Card: Dictation Behavior
+        # Card 1: Interface & System (Language selection at the top)
+        card_iface, list_iface = self._create_card(self.i18n.t("group_interface_system"))
+
+        self.ui_lang_combo = Gtk.ComboBoxText()
+        self.ui_lang_combo.append("en", "English")
+        self.ui_lang_combo.append("es", "Español")
+        self.ui_lang_combo.append("fr", "Français")
+        self.ui_lang_combo.append("de", "Deutsch")
+        self.ui_lang_combo.set_active_id(self.config.get("ui_language", "en"))
+        self.ui_lang_combo.connect("changed", self.on_ui_language_changed)
+        list_iface.add(self._create_control_row(self.i18n.t("ui_language"), self.ui_lang_combo))
+
+        from core.hardware import detect_desktop_environment
+        _, is_gnome = detect_desktop_environment()
+
+        self.indicator_combo = Gtk.ComboBoxText()
+        self.indicator_combo.append("auto", self.i18n.t("indicator_mode_auto"))
+        if is_gnome:
+            self.indicator_combo.append("gnome_ext", self.i18n.t("indicator_mode_gnome"))
+        else:
+            self.indicator_combo.append("gnome_ext", f"{self.i18n.t('indicator_mode_gnome')} ({self.i18n.t('indicator_gnome_unavailable')})")
+        self.indicator_combo.append("tray", self.i18n.t("indicator_mode_tray"))
+        self.indicator_combo.append("none", self.i18n.t("indicator_mode_none"))
+
+        curr_mode = self.config.get("indicator_mode", "auto")
+        self.indicator_combo.set_active_id(curr_mode)
+        self.indicator_combo.connect("changed", self.on_indicator_mode_changed)
+        list_iface.add(self._create_control_row(self.i18n.t("lbl_indicator_mode"), self.indicator_combo))
+
+        self.hide_bubble_switch = Gtk.Switch()
+        self.hide_bubble_switch.set_active(self.config.get("hide_bubble", False))
+        self.hide_bubble_switch.connect("notify::active", self._on_hide_bubble_changed)
+        list_iface.add(self._create_switch_row(self.i18n.t("lbl_hide_bubble"), self.hide_bubble_switch))
+
+        self.bubble_mode_combo = Gtk.ComboBoxText()
+        self.bubble_mode_combo.append("auto", self.i18n.t("bubble_mode_auto"))
+        self.bubble_mode_combo.append("text", self.i18n.t("bubble_mode_text"))
+        self.bubble_mode_combo.append("interactive", self.i18n.t("bubble_mode_interactive"))
+        self.bubble_mode_combo.set_active_id(self.config.get("bubble_mode", "auto"))
+        self.bubble_mode_combo.set_sensitive(not self.hide_bubble_switch.get_active())
+        self.bubble_mode_combo.connect("changed", self.auto_save)
+        list_iface.add(self._create_control_row(self.i18n.t("lbl_bubble_mode"), self.bubble_mode_combo))
+
+        self.btn_run_wizard = Gtk.Button(label=self.i18n.t("btn_launch_wizard"))
+        self.btn_run_wizard.connect("clicked", self.on_launch_wizard_clicked)
+        list_iface.add(self._create_control_row(self.i18n.t("lbl_launch_wizard"), self.btn_run_wizard, self.i18n.t("lbl_launch_wizard_desc")))
+
+        general_box.pack_start(card_iface, False, False, 0)
+
+        # Card 2: Dictation Behavior
         card_dict, list_dict = self._create_card(self.i18n.t("group_dictation_behavior"))
         
         self.auto_send_switch = Gtk.Switch()
@@ -445,54 +499,35 @@ class ConfigWindow(Gtk.Window):
         self.auto_pause_switch.connect("notify::active", self.auto_save)
         list_dict.add(self._create_switch_row(self.i18n.t("lbl_auto_pause"), self.auto_pause_switch))
 
-        general_box.pack_start(card_dict, False, False, 0)
-
-        # Card: Interface & System
-        card_iface, list_iface = self._create_card(self.i18n.t("group_interface_system"))
-
-        self.hide_bubble_switch = Gtk.Switch()
-        self.hide_bubble_switch.set_active(self.config.get("hide_bubble", False))
-        self.hide_bubble_switch.connect("notify::active", self._on_hide_bubble_changed)
-        list_iface.add(self._create_switch_row(self.i18n.t("lbl_hide_bubble"), self.hide_bubble_switch))
-
-        self.bubble_mode_combo = Gtk.ComboBoxText()
-        self.bubble_mode_combo.append("auto", self.i18n.t("bubble_mode_auto"))
-        self.bubble_mode_combo.append("text", self.i18n.t("bubble_mode_text"))
-        self.bubble_mode_combo.append("interactive", self.i18n.t("bubble_mode_interactive"))
-        self.bubble_mode_combo.set_active_id(self.config.get("bubble_mode", "auto"))
-        self.bubble_mode_combo.set_sensitive(not self.hide_bubble_switch.get_active())
-        self.bubble_mode_combo.connect("changed", self.auto_save)
-        list_iface.add(self._create_control_row(self.i18n.t("lbl_bubble_mode"), self.bubble_mode_combo))
-
         self.notifications_switch = Gtk.Switch()
         self.notifications_switch.set_active(self.config.get("show_notifications", True))
         self.notifications_switch.connect("notify::active", self.auto_save)
-        list_iface.add(self._create_switch_row(self.i18n.t("lbl_notifications"), self.notifications_switch))
+        list_dict.add(self._create_switch_row(self.i18n.t("lbl_notifications"), self.notifications_switch))
 
         self.autostart_switch = Gtk.Switch()
-        autostart_path = os.path.expanduser("~/.config/autostart/dictate-daemon.desktop")
+        autostart_path = os.path.expanduser("~/.config/autostart/opendictate.desktop")
         self.autostart_switch.set_active(os.path.exists(autostart_path))
         self.autostart_switch.connect("notify::active", self.auto_save)
-        list_iface.add(self._create_switch_row(self.i18n.t("lbl_autostart"), self.autostart_switch))
+        list_dict.add(self._create_switch_row(self.i18n.t("lbl_autostart"), self.autostart_switch))
 
-        general_box.pack_start(card_iface, False, False, 0)
+        general_box.pack_start(card_dict, False, False, 0)
 
-        # Card: Updates
-        card_updates, list_updates = self._create_card("Actualizaciones")
+        # Card 3: Updates
+        card_updates, list_updates = self._create_card(self.i18n.t("group_updates"))
 
         self.check_updates_switch = Gtk.Switch()
         self.check_updates_switch.set_active(self.config.get("check_updates", False))
         self.check_updates_switch.connect("notify::active", self._on_check_updates_changed)
-        list_updates.add(self._create_switch_row("Buscar actualizaciones automáticamente", self.check_updates_switch))
+        list_updates.add(self._create_switch_row(self.i18n.t("lbl_check_updates"), self.check_updates_switch))
 
         self.update_freq_combo = Gtk.ComboBoxText()
-        self.update_freq_combo.append("daily", "Diariamente")
-        self.update_freq_combo.append("weekly", "Semanalmente")
-        self.update_freq_combo.append("monthly", "Mensualmente")
+        self.update_freq_combo.append("daily", self.i18n.t("freq_daily"))
+        self.update_freq_combo.append("weekly", self.i18n.t("freq_weekly"))
+        self.update_freq_combo.append("monthly", self.i18n.t("freq_monthly"))
         self.update_freq_combo.set_active_id(self.config.get("update_frequency", "monthly"))
         self.update_freq_combo.set_sensitive(self.check_updates_switch.get_active())
         self.update_freq_combo.connect("changed", self.auto_save)
-        list_updates.add(self._create_control_row("Frecuencia de búsqueda", self.update_freq_combo))
+        list_updates.add(self._create_control_row(self.i18n.t("lbl_update_frequency"), self.update_freq_combo))
 
         # Manual check button
         check_btn_row = Gtk.ListBoxRow()
@@ -502,7 +537,7 @@ class ConfigWindow(Gtk.Window):
         check_btn_box.set_margin_top(12)
         check_btn_box.set_margin_bottom(12)
         
-        self.manual_check_btn = Gtk.Button(label="Buscar actualizaciones ahora")
+        self.manual_check_btn = Gtk.Button(label=self.i18n.t("btn_check_updates_now"))
         self.manual_check_btn.connect("clicked", self._on_manual_check_updates)
         check_btn_box.pack_start(self.manual_check_btn, True, True, 0)
         
@@ -624,27 +659,35 @@ class ConfigWindow(Gtk.Window):
         # Container for dependent chunk options
         self.chunk_options_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
-        self.chunk_stride_spin = Gtk.SpinButton.new_with_range(5.0, 30.0, 1.0)
-        self.chunk_stride_spin.set_value(self.config.get("chunk_stride", 15.0))
-        self.chunk_stride_spin.connect("value-changed", self.auto_save)
+        self.chunk_silence_spin = Gtk.SpinButton.new_with_range(0.2, 3.0, 0.1)
+        self.chunk_silence_spin.set_value(self.config.get("chunk_silence_duration", 0.6))
+        self.chunk_silence_spin.connect("value-changed", self.auto_save)
         self.chunk_options_box.pack_start(
-            self._create_control_row(self.i18n.t("lbl_chunk_stride"), self.chunk_stride_spin),
+            self._create_control_row(self.i18n.t("lbl_chunk_silence"), self.chunk_silence_spin),
             False, False, 0
         )
 
-        self.chunk_overlap_spin = Gtk.SpinButton.new_with_range(0.0, 10.0, 0.5)
-        self.chunk_overlap_spin.set_value(self.config.get("chunk_overlap", 2.0))
-        self.chunk_overlap_spin.connect("value-changed", self.auto_save)
+        self.chunk_max_spin = Gtk.SpinButton.new_with_range(5.0, 60.0, 1.0)
+        self.chunk_max_spin.set_value(self.config.get("chunk_max_duration", 30.0))
+        self.chunk_max_spin.connect("value-changed", self.auto_save)
         self.chunk_options_box.pack_start(
-            self._create_control_row(self.i18n.t("lbl_chunk_overlap"), self.chunk_overlap_spin),
+            self._create_control_row(self.i18n.t("lbl_chunk_max"), self.chunk_max_spin),
             False, False, 0
         )
 
-        self.chunk_tol_spin = Gtk.SpinButton.new_with_range(0.0, 2.0, 0.1)
-        self.chunk_tol_spin.set_value(self.config.get("chunk_tolerance", 1.0))
-        self.chunk_tol_spin.connect("value-changed", self.auto_save)
+        self.chunk_fallback_silence_spin = Gtk.SpinButton.new_with_range(0.1, 2.0, 0.1)
+        self.chunk_fallback_silence_spin.set_value(self.config.get("chunk_fallback_silence_duration", 0.4))
+        self.chunk_fallback_silence_spin.connect("value-changed", self.auto_save)
         self.chunk_options_box.pack_start(
-            self._create_control_row(self.i18n.t("lbl_chunk_tolerance"), self.chunk_tol_spin),
+            self._create_control_row(self.i18n.t("lbl_chunk_fallback_silence"), self.chunk_fallback_silence_spin),
+            False, False, 0
+        )
+
+        self.chunk_min_spin = Gtk.SpinButton.new_with_range(1.0, 10.0, 0.5)
+        self.chunk_min_spin.set_value(self.config.get("chunk_min_duration", 3.0))
+        self.chunk_min_spin.connect("value-changed", self.auto_save)
+        self.chunk_options_box.pack_start(
+            self._create_control_row(self.i18n.t("lbl_chunk_min"), self.chunk_min_spin),
             False, False, 0
         )
 
@@ -677,7 +720,7 @@ class ConfigWindow(Gtk.Window):
 
         self.vad_switch = Gtk.Switch()
         self.vad_switch.set_active(self.config.get("vad_filter", False))
-        self.vad_switch.connect("notify::active", self.auto_save)
+        self.vad_switch.connect("notify::active", self._on_vad_switch_changed)
         list_stt.add(self._create_switch_row(self.i18n.t("lbl_vad"), self.vad_switch))
 
         self.beam_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 1, 10, 1)
@@ -696,42 +739,120 @@ class ConfigWindow(Gtk.Window):
 
         adv_box.pack_start(card_stt, False, False, 0)
 
-        # Card 3: Desktop Integration & Localization
-        card_desk, list_desk = self._create_card(self.i18n.t("group_desktop_integration"))
+        # Expander: Expert Whisper STT Parameters
+        self.expert_expander = Gtk.Expander(label=f"<b>{self.i18n.t('expander_expert_whisper')}</b>")
+        self.expert_expander.set_use_markup(True)
+        self.expert_expander.set_margin_top(4)
+        self.expert_expander.set_margin_bottom(4)
 
-        self.ui_lang_combo = Gtk.ComboBoxText()
-        self.ui_lang_combo.append("en", "English")
-        self.ui_lang_combo.append("es", "Español")
-        self.ui_lang_combo.append("fr", "Français")
-        self.ui_lang_combo.append("de", "Deutsch")
-        self.ui_lang_combo.set_active_id(self.config.get("ui_language", "en"))
-        self.ui_lang_combo.connect("changed", self.on_ui_language_changed)
-        list_desk.add(self._create_control_row(self.i18n.t("ui_language"), self.ui_lang_combo))
+        expert_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
 
-        # Mutually exclusive indicator mode
-        from core.hardware import detect_desktop_environment
-        _, is_gnome = detect_desktop_environment()
+        # Sub-Card 1: Hardware & Computation
+        card_hw, list_hw = self._create_card(self.i18n.t("group_expert_hardware"))
 
-        self.indicator_combo = Gtk.ComboBoxText()
-        self.indicator_combo.append("auto", self.i18n.t("indicator_mode_auto"))
-        if is_gnome:
-            self.indicator_combo.append("gnome_ext", self.i18n.t("indicator_mode_gnome"))
-        else:
-            self.indicator_combo.append("gnome_ext", f"{self.i18n.t('indicator_mode_gnome')} ({self.i18n.t('indicator_gnome_unavailable')})")
-        self.indicator_combo.append("tray", self.i18n.t("indicator_mode_tray"))
-        self.indicator_combo.append("none", self.i18n.t("indicator_mode_none"))
+        cuda_ready = is_cuda_runtime_ready()
+        cpu_cores = get_cpu_core_count()
 
-        curr_mode = self.config.get("indicator_mode", "auto")
-        self.indicator_combo.set_active_id(curr_mode)
-        self.indicator_combo.connect("changed", self.on_indicator_mode_changed)
-        list_desk.add(self._create_control_row(self.i18n.t("lbl_indicator_mode"), self.indicator_combo))
+        self.device_combo = Gtk.ComboBoxText()
+        self.device_combo.append("auto", self.i18n.t("device_auto"))
+        self.device_combo.append("cpu", self.i18n.t("device_cpu"))
+        if cuda_ready:
+            self.device_combo.append("cuda", self.i18n.t("device_cuda"))
 
-        # Launch Setup Wizard Button
-        self.btn_run_wizard = Gtk.Button(label=self.i18n.t("btn_launch_wizard"))
-        self.btn_run_wizard.connect("clicked", self.on_launch_wizard_clicked)
-        list_desk.add(self._create_control_row(self.i18n.t("lbl_launch_wizard"), self.btn_run_wizard, self.i18n.t("lbl_launch_wizard_desc")))
+        curr_dev = self.config.get("whisper_device", "auto")
+        if curr_dev == "cuda" and not cuda_ready:
+            curr_dev = "auto"
+            self.config["whisper_device"] = "auto"
+        self.device_combo.set_active_id(curr_dev)
+        self.device_combo.connect("changed", self._on_expert_device_changed)
+        list_hw.add(self._create_control_row(self.i18n.t("lbl_whisper_device"), self.device_combo, self.i18n.t("desc_whisper_device")))
 
-        adv_box.pack_start(card_desk, False, False, 0)
+        self.compute_combo = Gtk.ComboBoxText()
+        self._populate_compute_types(curr_dev)
+        curr_compute = self.config.get("whisper_compute_type", "default")
+        self.compute_combo.set_active_id(curr_compute)
+        self.compute_combo.connect("changed", self.auto_save)
+        list_hw.add(self._create_control_row(self.i18n.t("lbl_whisper_compute_type"), self.compute_combo, self.i18n.t("desc_whisper_compute_type")))
+
+        self.cpu_threads_spin = Gtk.SpinButton.new_with_range(0, cpu_cores, 1)
+        self.cpu_threads_spin.set_value(self.config.get("whisper_cpu_threads", 0))
+        self.cpu_threads_spin.connect("value-changed", self.auto_save)
+        list_hw.add(self._create_control_row(self.i18n.t("lbl_whisper_cpu_threads"), self.cpu_threads_spin, self.i18n.t("desc_whisper_cpu_threads")))
+
+        expert_vbox.pack_start(card_hw, False, False, 0)
+
+        # Sub-Card 2: Repetition & Hallucination Control
+        card_anti_loop, list_anti_loop = self._create_card(self.i18n.t("group_expert_anti_loop"))
+
+        self.rep_penalty_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 1.0, 1.5, 0.05)
+        self.rep_penalty_scale.set_value(self.config.get("repetition_penalty", 1.1))
+        self.rep_penalty_scale.set_digits(2)
+        self.rep_penalty_scale.set_size_request(160, -1)
+        self.rep_penalty_scale.connect("value-changed", self.auto_save)
+        list_anti_loop.add(self._create_control_row(self.i18n.t("lbl_repetition_penalty"), self.rep_penalty_scale, self.i18n.t("desc_repetition_penalty")))
+
+        self.no_repeat_ngram_spin = Gtk.SpinButton.new_with_range(0, 5, 1)
+        self.no_repeat_ngram_spin.set_value(self.config.get("no_repeat_ngram_size", 0))
+        self.no_repeat_ngram_spin.connect("value-changed", self.auto_save)
+        list_anti_loop.add(self._create_control_row(self.i18n.t("lbl_no_repeat_ngram_size"), self.no_repeat_ngram_spin, self.i18n.t("desc_no_repeat_ngram_size")))
+
+        self.hallucination_silence_spin = Gtk.SpinButton.new_with_range(0.0, 5.0, 0.5)
+        self.hallucination_silence_spin.set_value(self.config.get("hallucination_silence_threshold", 2.0))
+        self.hallucination_silence_spin.set_digits(1)
+        self.hallucination_silence_spin.connect("value-changed", self.auto_save)
+        list_anti_loop.add(self._create_control_row(self.i18n.t("lbl_hallucination_silence_threshold"), self.hallucination_silence_spin, self.i18n.t("desc_hallucination_silence_threshold")))
+
+        expert_vbox.pack_start(card_anti_loop, False, False, 0)
+
+        # Sub-Card 3: Fine-Tuned Decoding
+        card_decoding, list_decoding = self._create_card(self.i18n.t("group_expert_decoding"))
+
+        self.beam_patience_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.5, 2.0, 0.1)
+        self.beam_patience_scale.set_value(self.config.get("beam_patience", 1.0))
+        self.beam_patience_scale.set_digits(1)
+        self.beam_patience_scale.set_size_request(160, -1)
+        self.beam_patience_scale.connect("value-changed", self.auto_save)
+        list_decoding.add(self._create_control_row(self.i18n.t("lbl_beam_patience"), self.beam_patience_scale, self.i18n.t("desc_beam_patience")))
+
+        self.length_penalty_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.2, 2.0, 0.1)
+        self.length_penalty_scale.set_value(self.config.get("length_penalty", 1.0))
+        self.length_penalty_scale.set_digits(1)
+        self.length_penalty_scale.set_size_request(160, -1)
+        self.length_penalty_scale.connect("value-changed", self.auto_save)
+        list_decoding.add(self._create_control_row(self.i18n.t("lbl_length_penalty"), self.length_penalty_scale, self.i18n.t("desc_length_penalty")))
+
+        self.condition_on_previous_switch = Gtk.Switch()
+        self.condition_on_previous_switch.set_active(self.config.get("condition_on_previous_text", True))
+        self.condition_on_previous_switch.connect("notify::active", self.auto_save)
+        list_decoding.add(self._create_switch_row(self.i18n.t("lbl_condition_on_previous_text"), self.condition_on_previous_switch, self.i18n.t("desc_condition_on_previous_text")))
+
+        expert_vbox.pack_start(card_decoding, False, False, 0)
+
+        # Sub-Card 4: Detailed VAD Parameters
+        self.card_vad_expert, list_vad_expert = self._create_card(self.i18n.t("group_expert_vad"))
+
+        self.vad_threshold_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.1, 0.9, 0.05)
+        self.vad_threshold_scale.set_value(self.config.get("vad_threshold", 0.5))
+        self.vad_threshold_scale.set_digits(2)
+        self.vad_threshold_scale.set_size_request(160, -1)
+        self.vad_threshold_scale.connect("value-changed", self.auto_save)
+        list_vad_expert.add(self._create_control_row(self.i18n.t("lbl_vad_threshold"), self.vad_threshold_scale, self.i18n.t("desc_vad_threshold")))
+
+        self.vad_speech_pad_spin = Gtk.SpinButton.new_with_range(100, 1000, 50)
+        self.vad_speech_pad_spin.set_value(self.config.get("vad_speech_pad_ms", 400))
+        self.vad_speech_pad_spin.connect("value-changed", self.auto_save)
+        list_vad_expert.add(self._create_control_row(self.i18n.t("lbl_vad_speech_pad"), self.vad_speech_pad_spin, self.i18n.t("desc_vad_speech_pad")))
+
+        self.vad_min_silence_spin = Gtk.SpinButton.new_with_range(500, 3000, 100)
+        self.vad_min_silence_spin.set_value(self.config.get("vad_min_silence_duration_ms", 2000))
+        self.vad_min_silence_spin.connect("value-changed", self.auto_save)
+        list_vad_expert.add(self._create_control_row(self.i18n.t("lbl_vad_min_silence"), self.vad_min_silence_spin, self.i18n.t("desc_vad_min_silence")))
+
+        self.card_vad_expert.set_sensitive(self.vad_switch.get_active())
+        expert_vbox.pack_start(self.card_vad_expert, False, False, 0)
+
+        self.expert_expander.add(expert_vbox)
+        adv_box.pack_start(self.expert_expander, False, False, 0)
 
         # ---------------------------------------------------------
         # Tab 5: Gestor de Modelos (Model Manager)
@@ -762,14 +883,14 @@ class ConfigWindow(Gtk.Window):
         # Card 1: CLI Commands & Terminal Actions
         card_cli, list_cli = self._create_card(self.i18n.t("group_cli_commands"))
         cli_commands = [
-            ("opendictate --toggle-record-send", "Alternar grabación / envío (Recomendado)"),
-            ("opendictate --record", "Iniciar o reanudar grabación"),
-            ("opendictate --pause", "Pausar grabación actual"),
-            ("opendictate --cancel", "Cancelar y descartar audio"),
-            ("opendictate --send", "Simular Enter tras pegar"),
-            ("opendictate --toggle-ai", "Alternar Limpieza con IA"),
-            ("opendictate --toggle-autosend", "Alternar Auto-Enviar"),
-            ("opendictate --toggle-bubble", "Mostrar / Ocultar burbuja"),
+            ("opendictate --toggle-record-send", self.i18n.t("cli_desc_toggle_record_send")),
+            ("opendictate --record", self.i18n.t("cli_desc_record")),
+            ("opendictate --pause", self.i18n.t("cli_desc_pause")),
+            ("opendictate --cancel", self.i18n.t("cli_desc_cancel")),
+            ("opendictate --send", self.i18n.t("cli_desc_send")),
+            ("opendictate --toggle-ai", self.i18n.t("cli_desc_toggle_ai")),
+            ("opendictate --toggle-autosend", self.i18n.t("cli_desc_toggle_autosend")),
+            ("opendictate --toggle-bubble", self.i18n.t("cli_desc_toggle_bubble")),
         ]
         for cmd, desc in cli_commands:
             list_cli.add(self._create_cli_command_row(cmd, desc))
@@ -922,6 +1043,32 @@ class ConfigWindow(Gtk.Window):
             self.chunk_options_box.set_sensitive(switch.get_active())
         self.auto_save()
 
+    def _on_vad_switch_changed(self, switch: Gtk.Switch, *args) -> None:
+        """Update sensitivity of expert VAD parameters card and trigger auto-save."""
+        if hasattr(self, 'card_vad_expert'):
+            self.card_vad_expert.set_sensitive(switch.get_active())
+        self.auto_save()
+
+    def _populate_compute_types(self, device: str) -> None:
+        """Populate compute type combo options based on target device support."""
+        if not hasattr(self, 'compute_combo'):
+            return
+        active_id = self.compute_combo.get_active_id() or self.config.get("whisper_compute_type", "default")
+        self.compute_combo.remove_all()
+        types = get_supported_compute_types(device)
+        for ct in types:
+            self.compute_combo.append(ct, ct)
+        if active_id in types:
+            self.compute_combo.set_active_id(active_id)
+        else:
+            self.compute_combo.set_active_id("default")
+
+    def _on_expert_device_changed(self, combo: Gtk.ComboBoxText) -> None:
+        """Handle execution device change and refresh supported compute types."""
+        dev = combo.get_active_id() or "auto"
+        self._populate_compute_types(dev)
+        self.auto_save()
+
     def on_delete_event(self, widget: Gtk.Widget, event: Any) -> bool:
         self.hide()
         return True
@@ -1063,8 +1210,10 @@ class ConfigWindow(Gtk.Window):
             self.show_message(self.i18n.t("error", ""), str(e))
 
     def load_config(self) -> Dict[str, Any]:
-        if self.daemon_ref:
+        if self.daemon_ref and hasattr(self.daemon_ref, 'config'):
             return self.daemon_ref.config.copy()
+        if hasattr(self, 'config_manager'):
+            return self.config_manager.load_config()
         return {}
 
     def update_ui_from_config(self, new_config: Dict[str, Any]) -> None:
@@ -1103,14 +1252,38 @@ class ConfigWindow(Gtk.Window):
                 self.chunk_options_box.set_sensitive(is_rt)
 
         if hasattr(self, 'vad_switch'):
-            self.chunk_stride_spin.set_value(self.config.get("chunk_stride", 15.0))
-            self.chunk_overlap_spin.set_value(self.config.get("chunk_overlap", 2.0))
-            self.chunk_tol_spin.set_value(self.config.get("chunk_tolerance", 1.0))
+            if hasattr(self, 'chunk_silence_spin'):
+                self.chunk_silence_spin.set_value(self.config.get("chunk_silence_duration", 0.6))
+                self.chunk_max_spin.set_value(self.config.get("chunk_max_duration", 30.0))
+                self.chunk_fallback_silence_spin.set_value(self.config.get("chunk_fallback_silence_duration", 0.4))
+                self.chunk_min_spin.set_value(self.config.get("chunk_min_duration", 3.0))
             self.vad_switch.set_active(self.config.get("vad_filter", False))
             self.lang_combo.set_active_id(self.config.get("language", "auto"))
             self.ui_lang_combo.set_active_id(self.config.get("ui_language", "en"))
             self.beam_scale.set_value(self.config.get("beam_size", 5))
             self.temp_scale.set_value(self.config.get("temperature", 0.0))
+
+        if hasattr(self, 'device_combo'):
+            cuda_ready = is_cuda_runtime_ready()
+            dev = self.config.get("whisper_device", "auto")
+            if dev == "cuda" and not cuda_ready:
+                dev = "auto"
+                self.config["whisper_device"] = "auto"
+            self.device_combo.set_active_id(dev)
+            self._populate_compute_types(dev)
+            self.compute_combo.set_active_id(self.config.get("whisper_compute_type", "default"))
+            self.cpu_threads_spin.set_value(self.config.get("whisper_cpu_threads", 0))
+            self.rep_penalty_scale.set_value(self.config.get("repetition_penalty", 1.1))
+            self.no_repeat_ngram_spin.set_value(self.config.get("no_repeat_ngram_size", 0))
+            self.hallucination_silence_spin.set_value(self.config.get("hallucination_silence_threshold", 2.0))
+            self.beam_patience_scale.set_value(self.config.get("beam_patience", 1.0))
+            self.length_penalty_scale.set_value(self.config.get("length_penalty", 1.0))
+            self.condition_on_previous_switch.set_active(self.config.get("condition_on_previous_text", True))
+            self.vad_threshold_scale.set_value(self.config.get("vad_threshold", 0.5))
+            self.vad_speech_pad_spin.set_value(self.config.get("vad_speech_pad_ms", 400))
+            self.vad_min_silence_spin.set_value(self.config.get("vad_min_silence_duration_ms", 2000))
+            if hasattr(self, 'card_vad_expert'):
+                self.card_vad_expert.set_sensitive(self.config.get("vad_filter", False))
 
         if hasattr(self, 'indicator_combo'):
             self.indicator_combo.set_active_id(self.config.get("indicator_mode", "auto"))
@@ -1121,9 +1294,66 @@ class ConfigWindow(Gtk.Window):
     def on_ui_language_changed(self, combo: Gtk.ComboBoxText, *args) -> None:
         if self._updating_ui:
             return
-        self.auto_save()
-        if self.daemon_ref:
-            GLib.idle_add(self.daemon_ref.restart_config_window)
+        new_lang = combo.get_active_id() or "en"
+        if new_lang == self.config.get("ui_language"):
+            return
+
+        self._updating_ui = True
+        self.config["ui_language"] = new_lang
+        self.i18n = get_translator(new_lang)
+        self.config_manager.save_config(self.config)
+
+        if self.on_config_saved:
+            try:
+                self.on_config_saved(self.config)
+            except Exception as e:
+                logging.error(f"Error in on_config_saved: {e}")
+        else:
+            self._notify_daemon_reload()
+
+        self._updating_ui = False
+        self._rebuild_ui()
+
+    def _rebuild_ui(self) -> None:
+        active_tab = "general"
+        if hasattr(self, 'stack') and self.stack:
+            active_tab = self.stack.get_visible_child_name() or "general"
+
+        for child in self.get_children():
+            self.remove(child)
+
+        self._build_ui()
+        self.set_title(self.i18n.t("settings_title"))
+        if hasattr(self, 'stack') and self.stack:
+            self.stack.set_visible_child_name(active_tab)
+        self.show_all()
+
+    def _notify_daemon_reload(self) -> None:
+        try:
+            from core.ipc import SOCKET_PATH
+            import socket
+            if os.path.exists(SOCKET_PATH):
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(0.5)
+                s.connect(SOCKET_PATH)
+                s.sendall(b"reload-config\n")
+                s.close()
+        except Exception as e:
+            logging.debug(f"Could not notify daemon of config change: {e}")
+
+        try:
+            state_file = "/tmp/opendictate_state.json"
+            state_data = {}
+            if os.path.exists(state_file):
+                with open(state_file, "r") as f:
+                    state_data = json.load(f)
+            state_data["ui_language"] = self.config.get("ui_language", "en")
+            tmp_path = "/tmp/opendictate_state.json.tmp"
+            with open(tmp_path, "w") as f:
+                json.dump(state_data, f)
+            os.replace(tmp_path, state_file)
+        except Exception as e:
+            logging.debug(f"Could not sync state file directly: {e}")
 
     def _on_hide_bubble_changed(self, switch, gparam):
         self.bubble_mode_combo.set_sensitive(not switch.get_active())
@@ -1202,21 +1432,46 @@ Icon=audio-input-microphone
 
         # Save Engine & Advanced Settings
         if hasattr(self, 'vad_switch'):
-            self.config["chunk_stride"] = float(self.chunk_stride_spin.get_value())
-            self.config["chunk_overlap"] = float(self.chunk_overlap_spin.get_value())
-            self.config["chunk_tolerance"] = float(self.chunk_tol_spin.get_value())
+            if hasattr(self, 'chunk_silence_spin'):
+                self.config["chunk_silence_duration"] = float(self.chunk_silence_spin.get_value())
+                self.config["chunk_max_duration"] = float(self.chunk_max_spin.get_value())
+                self.config["chunk_fallback_silence_duration"] = float(self.chunk_fallback_silence_spin.get_value())
+                self.config["chunk_min_duration"] = float(self.chunk_min_spin.get_value())
             self.config["vad_filter"] = self.vad_switch.get_active()
             self.config["language"] = self.lang_combo.get_active_id()
             self.config["ui_language"] = self.ui_lang_combo.get_active_id()
             self.config["beam_size"] = int(self.beam_scale.get_value())
             self.config["temperature"] = float(self.temp_scale.get_value())
 
+        if hasattr(self, 'device_combo'):
+            dev = self.device_combo.get_active_id() or "auto"
+            if dev == "cuda" and not is_cuda_runtime_ready():
+                dev = "auto"
+            self.config["whisper_device"] = dev
+            self.config["whisper_compute_type"] = self.compute_combo.get_active_id() or "default"
+            self.config["whisper_cpu_threads"] = int(self.cpu_threads_spin.get_value())
+            self.config["repetition_penalty"] = float(self.rep_penalty_scale.get_value())
+            self.config["no_repeat_ngram_size"] = int(self.no_repeat_ngram_spin.get_value())
+            self.config["hallucination_silence_threshold"] = float(self.hallucination_silence_spin.get_value())
+            self.config["beam_patience"] = float(self.beam_patience_scale.get_value())
+            self.config["length_penalty"] = float(self.length_penalty_scale.get_value())
+            self.config["condition_on_previous_text"] = self.condition_on_previous_switch.get_active()
+            self.config["vad_threshold"] = float(self.vad_threshold_scale.get_value())
+            self.config["vad_speech_pad_ms"] = int(self.vad_speech_pad_spin.get_value())
+            self.config["vad_min_silence_duration_ms"] = int(self.vad_min_silence_spin.get_value())
+
         buf = self.base_prompt_view.get_buffer()
         start, end = buf.get_bounds()
         self.config["base_system_prompt"] = buf.get_text(start, end, True).strip()
 
         if self.on_config_saved:
-            self.on_config_saved(self.config)
+            try:
+                self.on_config_saved(self.config)
+            except Exception as e:
+                logging.error(f"Error in on_config_saved: {e}")
+        elif hasattr(self, 'config_manager'):
+            self.config_manager.save_config(self.config)
+            self._notify_daemon_reload()
 
 
 
@@ -1352,4 +1607,15 @@ Icon=audio-input-microphone
         else:
             subprocess.run(["gnome-extensions", "disable", uuid])
         GLib.timeout_add(400, self._refresh_integrations_status)
+
+
+if __name__ == "__main__":
+    import logging
+    from core.config import CONFIG_PATH
+    logging.basicConfig(level=logging.INFO)
+    db = os.path.expanduser("~/.local/share/opendictate/opendictate.db")
+    win = ConfigWindow(db, CONFIG_PATH)
+    win.connect("destroy", Gtk.main_quit)
+    Gtk.main()
+
 

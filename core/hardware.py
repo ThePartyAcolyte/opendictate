@@ -37,12 +37,43 @@ def get_system_ram_gb() -> float:
 
 
 def is_cuda_runtime_ready() -> bool:
-    """Check if CTranslate2 can actually run on CUDA with working cuBLAS/cuDNN."""
+    """Check if CTranslate2 can actually run on CUDA with working cuBLAS/cuDNN and compatible driver."""
     try:
         import ctranslate2
-        return ctranslate2.get_cuda_device_count() > 0
+        import numpy as np
+        if ctranslate2.get_cuda_device_count() == 0:
+            return False
+        test_storage = ctranslate2.StorageView.from_array(
+            np.array([1.0], dtype=np.float32)
+        ).to_device(ctranslate2.Device.cuda)
+        del test_storage
+        return True
     except Exception:
         return False
+
+
+def get_cpu_core_count() -> int:
+    """Return total available CPU logical cores on the system."""
+    try:
+        count = os.cpu_count()
+        return count if count and count > 0 else 1
+    except Exception:
+        return 1
+
+
+def get_supported_compute_types(device: str = "auto") -> Tuple[str, ...]:
+    """Return valid CTranslate2 compute types based on selected device and CUDA availability.
+
+    Args:
+        device: Target execution device ("auto", "cpu", or "cuda").
+
+    Returns:
+        Tuple of supported compute type strings.
+    """
+    cuda_available = is_cuda_runtime_ready()
+    if device == "cuda" or (device == "auto" and cuda_available):
+        return ("default", "float16", "int8_float16", "int8", "float32")
+    return ("default", "int8", "float32")
 
 
 def get_gpu_info() -> Dict[str, Any]:

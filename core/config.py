@@ -19,6 +19,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "model": "gemma-4-26b-a4b-it",
     "restore_window_focus": False,
     "realtime_mode": True,
+    "chunk_silence_duration": 0.6,
+    "chunk_max_duration": 30.0,
+    "chunk_fallback_silence_duration": 0.4,
+    "chunk_min_duration": 3.0,
+    "chunk_vad_energy_threshold": 0.012,
     "chunk_stride": 15.0,
     "chunk_overlap": 2.0,
     "chunk_tolerance": 1.0,
@@ -31,7 +36,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "check_updates": False,
     "update_frequency": "monthly",
     "last_update_check": 0,
-    "initial_setup_completed": False
+    "initial_setup_completed": False,
+    "whisper_device": "auto",
+    "whisper_compute_type": "default",
+    "whisper_cpu_threads": 0,
+    "repetition_penalty": 1.1,
+    "no_repeat_ngram_size": 0,
+    "hallucination_silence_threshold": 2.0,
+    "condition_on_previous_text": True,
+    "beam_patience": 1.0,
+    "length_penalty": 1.0,
+    "vad_threshold": 0.5,
+    "vad_min_speech_duration_ms": 250,
+    "vad_min_silence_duration_ms": 2000,
+    "vad_speech_pad_ms": 400
 }
 
 
@@ -82,29 +100,27 @@ class ConfigManager:
                             value TEXT
                         )
                     ''')
-                    cursor.execute("PRAGMA user_version = 1")
+                    cursor.execute("PRAGMA user_version = 2")
                 elif current_version > 0:
                     self._run_migrations(cursor, current_version)
 
                 conn.commit()
-            logging.info(f"SQLite database ready (version {current_version if current_version > 0 else 1}).")
+            logging.info(f"SQLite database ready (version {current_version if current_version > 0 else 2}).")
         except Exception as e:
             logging.error(f"Error initializing SQLite database: {e}", exc_info=True)
 
     def _run_migrations(self, cursor: sqlite3.Cursor, current_version: int) -> None:
         """Execute incremental structural migrations based on current schema version."""
-        target_version = 1
+        target_version = 2
         if current_version >= target_version:
             return
 
         logging.info(f"Migrating database from version {current_version} to {target_version}...")
         
-        # Skeleton for future migrations:
-        # if current_version < 2:
-        #     logging.info("Applying migration v1 -> v2")
-        #     cursor.execute("ALTER TABLE history ADD COLUMN new_col TEXT")
-        #     current_version = 2
-        #     cursor.execute(f"PRAGMA user_version = {current_version}")
+        if current_version < 2:
+            logging.info("Applying migration v1 -> v2 (pruning deprecated chunk settings)...")
+            cursor.execute("DELETE FROM global_settings WHERE key IN ('chunk_stride', 'chunk_overlap', 'chunk_tolerance')")
+            cursor.execute("PRAGMA user_version = 2")
         
         logging.info("Database migration completed successfully.")
 

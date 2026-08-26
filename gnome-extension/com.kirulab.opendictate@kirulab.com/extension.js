@@ -225,7 +225,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
         
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
-        this.settingsItem = new PopupMenu.PopupMenuItem('Settings');
+        this.settingsItem = new PopupMenu.PopupMenuItem('⚙️ Settings');
         this.settingsItem.connect('activate', () => {
             this._sendCommand('settings');
         });
@@ -237,7 +237,14 @@ class OpenDictateIndicator extends PanelMenu.Button {
         });
         this.menu.addMenuItem(this.quitItem);
         
+        this.menu.connect('open-state-changed', (menu, isOpen) => {
+            if (isOpen) {
+                this._readStateFile();
+            }
+        });
+
         this._stateData = null;
+        this._currentLanguage = "en";
         this._timerId = null;
         this._indeterminateTimerId = null;
         this._targetWindow = null;
@@ -245,10 +252,75 @@ class OpenDictateIndicator extends PanelMenu.Button {
         
         this._monitorStateFile();
     }
+
+    _setMenuItemLabel(item, text) {
+        if (!item) return;
+        try {
+            if (item.label) {
+                if (typeof item.label.set_text === 'function') item.label.set_text(text);
+                item.label.text = text;
+            }
+            if (item._label) {
+                if (typeof item._label.set_text === 'function') item._label.set_text(text);
+                item._label.text = text;
+            }
+            let findAndSet = (actor) => {
+                if (!actor) return;
+                if (actor instanceof St.Label && actor !== item._statusLabel) {
+                    if (typeof actor.set_text === 'function') actor.set_text(text);
+                    actor.text = text;
+                }
+                if (typeof actor.get_children === 'function') {
+                    for (let child of actor.get_children()) {
+                        findAndSet(child);
+                    }
+                }
+            };
+            findAndSet(item);
+        } catch (e) {
+            console.error(`OpenDictate: Error setting label '${text}': ${e.message}`);
+        }
+    }
+
+    _updateMenuLabels(lang) {
+        if (!lang) lang = this._currentLanguage || "en";
+        this._currentLanguage = lang;
+        let labels = {
+            "en": {
+                autosend: "Auto-Send (Enter)",
+                ai: "AI Cleanup",
+                settings: "⚙️ Settings",
+                quit: "Quit OpenDictate"
+            },
+            "es": {
+                autosend: "Enviar Automático (Enter)",
+                ai: "Limpieza con IA",
+                settings: "⚙️ Configuración",
+                quit: "Salir de OpenDictate"
+            },
+            "de": {
+                autosend: "Auto-Senden (Enter)",
+                ai: "KI-Bereinigung",
+                settings: "⚙️ Einstellungen",
+                quit: "OpenDictate beenden"
+            },
+            "fr": {
+                autosend: "Envoi automatique (Entrée)",
+                ai: "Nettoyage IA",
+                settings: "⚙️ Paramètres",
+                quit: "Quitter OpenDictate"
+            }
+        };
+        let l = labels[lang] || labels["en"];
+        this._setMenuItemLabel(this.autosendToggle, l.autosend);
+        this._setMenuItemLabel(this.aiToggle, l.ai);
+        this._setMenuItemLabel(this.settingsItem, l.settings);
+        this._setMenuItemLabel(this.quitItem, l.quit);
+    }
     
     _sendCommand(cmd) {
         if (cmd === 'quit') {
-            this._updateUI({ state: "OFFLINE" });
+            this._updateUI({ state: "OFFLINE", ui_language: this._currentLanguage });
         }
         if (cmd === 'record') {
             this._targetWindow = this._captureFocusWindow();
@@ -266,19 +338,15 @@ class OpenDictateIndicator extends PanelMenu.Button {
                     });
                 } catch (e) {
                     console.error(`OpenDictate: Socket error sending ${cmd}: ${e.message}`);
-                    if (cmd !== 'quit') {
-                        this._ensureDaemonRunning();
-                    } else {
-                        this._updateUI({ state: "OFFLINE" });
+                    if (cmd === 'quit') {
+                        this._updateUI({ state: "OFFLINE", ui_language: this._currentLanguage });
                     }
                 }
             });
         } catch (e) {
             console.error(`OpenDictate: Socket setup error: ${e.message}`);
-            if (cmd !== 'quit') {
-                this._ensureDaemonRunning();
-            } else {
-                this._updateUI({ state: "OFFLINE" });
+            if (cmd === 'quit') {
+                this._updateUI({ state: "OFFLINE", ui_language: this._currentLanguage });
             }
         }
     }
@@ -304,9 +372,16 @@ class OpenDictateIndicator extends PanelMenu.Button {
     }
     
     _updateUI(stateData) {
+        if (!stateData) return;
         this._stateData = stateData;
         let state = stateData.state || "IDLE";
         
+        if (stateData.ui_language) {
+            this._updateMenuLabels(stateData.ui_language);
+        } else if (this._currentLanguage) {
+            this._updateMenuLabels(this._currentLanguage);
+        }
+
         this._updatingToggles = true;
         if (stateData.autosend_enabled !== undefined && this.autosendToggle.state !== stateData.autosend_enabled) {
             this.autosendToggle.setToggleState(stateData.autosend_enabled);
@@ -511,25 +586,24 @@ class OpenDictateIndicator extends PanelMenu.Button {
     }
     
     _readStateFile() {
-        let socketFile = Gio.File.new_for_path(SOCKET_PATH);
-        if (!socketFile.query_exists(null)) {
-            this._updateUI({ state: "OFFLINE" });
-            return;
-        }
-
         let file = Gio.File.new_for_path(STATE_FILE);
         if (!file.query_exists(null)) {
-            this._updateUI({ state: "OFFLINE" });
+            this._updateUI({ state: "OFFLINE", ui_language: this._currentLanguage });
             return;
         }
         
         try {
             let [, contents] = file.load_contents(null);
-            let stateData = JSON.parse(new TextDecoder().decode(contents));
+            let rawStr = new TextDecoder().decode(contents).trim();
+            if (!rawStr) return;
+            let stateData = JSON.parse(rawStr);
+            let socketFile = Gio.File.new_for_path(SOCKET_PATH);
+            if (!socketFile.query_exists(null)) {
+                stateData.state = "OFFLINE";
+            }
             this._updateUI(stateData);
         } catch (e) {
             console.error(`OpenDictate: Error reading state file: ${e.message}`);
-            this._updateUI({ state: "OFFLINE" });
         }
     }
     

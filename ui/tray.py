@@ -106,13 +106,13 @@ class TrayManager:
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
-        item_config = Gtk.MenuItem(label=self.i18n.t("settings"))
+        item_config = Gtk.MenuItem(label=f"⚙️ {self.i18n.t('settings')}")
         item_config.connect('activate', lambda w: self.on_open_config())
         self.menu.append(item_config)
 
         self.menu.append(Gtk.SeparatorMenuItem())
 
-        item_quit = Gtk.MenuItem(label=self.i18n.t("quit"))
+        item_quit = Gtk.MenuItem(label=f"✖ {self.i18n.t('quit')}")
         item_quit.connect('activate', lambda w: self.on_quit())
         self.menu.append(item_quit)
 

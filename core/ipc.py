@@ -35,15 +35,18 @@ class IPCServer:
 
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.bind(SOCKET_PATH)
-        self.sock.listen(5)
+        self.sock.listen(16)
         self.running = True
         logging.info(f"IPC Socket server bound and listening at {SOCKET_PATH}")
 
         while self.running:
             try:
                 conn, _ = self.sock.accept()
-                data = conn.recv(1024).decode('utf-8').strip()
-                conn.close()
+                try:
+                    conn.settimeout(0.5)
+                    data = conn.recv(1024).decode('utf-8').strip()
+                finally:
+                    conn.close()
 
                 if not data:
                     continue
