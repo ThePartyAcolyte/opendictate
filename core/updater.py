@@ -19,7 +19,8 @@ INTERVALS = {
 
 def _parse_version(v: str) -> list:
     """Parse semver string into a list of integers for comparison."""
-    return [int(x) for x in v.split(".") if x.isdigit()]
+    clean_v = str(v).strip().lstrip("vV")
+    return [int(x) for x in clean_v.split(".") if x.isdigit()]
 
 def check_for_updates(config: Dict[str, Any], config_manager: Any, force: bool = False) -> None:
     """
