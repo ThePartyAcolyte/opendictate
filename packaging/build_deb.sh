@@ -10,10 +10,11 @@ if [ "$1" = "--nightly" ]; then
     NIGHTLY=true
 fi
 
-RAW_VERSION=$(python3 -c 'import sys; sys.path.insert(0, "."); from core.__version__ import __version__; print(__version__)' 2>/dev/null || echo "1.1.0")
+RAW_VERSION=$(python3 -c 'import sys; sys.path.insert(0, "."); from core.__version__ import __version__; print(__version__)' 2>/dev/null || echo "1.2.0-rc1")
 if [ "$NIGHTLY" = "true" ]; then
     BUILD_DATE=$(date +%Y%m%d)
-    VERSION="${RAW_VERSION}-nightly.${BUILD_DATE}"
+    BASE_VERSION=$(echo "$RAW_VERSION" | sed 's/-.*//')
+    VERSION="${BASE_VERSION}-nightly.${BUILD_DATE}"
 else
     VERSION="${RAW_VERSION}"
 fi
