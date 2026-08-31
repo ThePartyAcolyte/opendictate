@@ -92,17 +92,24 @@ DESK_EOF
 
 echo "🔄 Iniciando demonio OpenDictate..."
 pkill -9 -f opendictate-daemon.py || true
-rm -f /tmp/opendictate.socket
+rm -f /tmp/opendictate.socket /tmp/opendictate_state.json*
 sleep 1
 
 export DISPLAY="${DISPLAY:-:0}"
 export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/1000}"
-export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/1000/bus}"
-nohup "$VENV_DIR/bin/python" -u "$INSTALL_DIR/opendictate-daemon.py" --force-start > "$INSTALL_DIR/opendictate.log" 2>&1 &
-DAEMON_PID=$!
-disown $DAEMON_PID
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=/run/user/$(id -u)/bus}"
+
+# Launch daemon detached in a new process group/session
+setsid "$VENV_DIR/bin/python" -u "$INSTALL_DIR/opendictate-daemon.py" --force-start > "$INSTALL_DIR/opendictate.log" 2>&1 &
 sleep 2
+
+# Verify daemon is running
+if pgrep -f opendictate-daemon.py > /dev/null; then
+    echo "✅ Demonio OpenDictate activo y en ejecución."
+else
+    echo "⚠️ Advertencia: No se pudo verificar el demonio tras el inicio."
+fi
 
 echo "✅ Instalación y despliegue completados exitosamente."
 echo ""

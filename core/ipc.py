@@ -7,7 +7,7 @@ Listens for incoming CLI, GNOME Shell Extension, and OpenDeck plugin socket comm
 import os
 import socket
 import logging
-from typing import Callable, Dict
+from typing import Callable, Dict, Optional
 
 SOCKET_PATH = "/tmp/opendictate.socket"
 

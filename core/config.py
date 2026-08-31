@@ -9,8 +9,12 @@ import os
 import json
 import sqlite3
 import logging
-import keyring
 from typing import Dict, Any, Optional, Tuple, List
+
+try:
+    import keyring
+except ImportError:
+    keyring = None
 
 CONFIG_PATH = os.path.expanduser("~/.config/opendictate/config.json")
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -19,14 +23,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "model": "gemma-4-26b-a4b-it",
     "restore_window_focus": False,
     "realtime_mode": True,
-    "chunk_silence_duration": 0.6,
+    "chunk_silence_duration": 0.85,
     "chunk_max_duration": 30.0,
-    "chunk_fallback_silence_duration": 0.4,
+    "chunk_fallback_silence_duration": 0.5,
     "chunk_min_duration": 3.0,
-    "chunk_vad_energy_threshold": 0.012,
-    "chunk_stride": 15.0,
-    "chunk_overlap": 2.0,
-    "chunk_tolerance": 1.0,
+    "chunk_speech_pad": 0.3,
+    "chunk_vad_energy_threshold": 0.030,
     "bubble_mode": "auto",
     "bubble_text_collapsed": False,
     "hide_bubble": False,
@@ -35,7 +37,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "use_gnome_ext": True,
     "check_updates": False,
     "update_frequency": "monthly",
+    "update_channel": "stable",
     "last_update_check": 0,
+    "available_update_version": "",
+    "available_update_url": "",
+    "available_update_notes": "",
+    "update_dismissed_version": "",
     "initial_setup_completed": False,
     "whisper_device": "auto",
     "whisper_compute_type": "default",
@@ -46,11 +53,35 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "condition_on_previous_text": True,
     "beam_patience": 1.0,
     "length_penalty": 1.0,
+    "vad_filter": False,
     "vad_threshold": 0.5,
     "vad_min_speech_duration_ms": 250,
     "vad_min_silence_duration_ms": 2000,
-    "vad_speech_pad_ms": 400
+    "vad_speech_pad_ms": 400,
+    "stt_backend": "local_whisper",
+    "gemini_live_mode": "SMART",
+    "gemini_live_model": "gemini-3.5-transcribe-live",
+    "llm_thinking_level": "minimal",
+    "voice_commands_enabled": False,
+    "voice_command_threshold": 0.70,
+    "voice_command_silence_pause": 1.5,
+    "voice_vad_threshold": 0.075,
+    "voice_vad_noise_floor": 0.030,
+    "echo_cancellation_enabled": True
 }
+
+
+def is_api_available(config: Dict[str, Any]) -> bool:
+    """Check if a valid Gemini API key is configured.
+
+    Args:
+        config: Application configuration dictionary.
+
+    Returns:
+        True if api_key is non-empty, False otherwise.
+    """
+    key = config.get("api_key", "")
+    return bool(key and str(key).strip())
 
 
 class ConfigManager:
@@ -64,7 +95,32 @@ class ConfigManager:
         """
         self.base_dir = base_dir or os.path.expanduser("~/.local/share/opendictate")
         self.db_path = os.path.join(self.base_dir, "opendictate.db")
+        self._cached_api_key: Optional[str] = None
         self.init_database()
+
+    def _get_api_key_safe(self) -> str:
+        """Retrieve API key from system keyring with retries and in-memory cache protection.
+
+        Returns:
+            Decrypted API key string, or empty string if not configured.
+        """
+        if not keyring:
+            return self._cached_api_key or ""
+
+        for attempt in range(3):
+            try:
+                stored_key = keyring.get_password("OpenDictate", "api_key")
+                if stored_key and stored_key.strip():
+                    self._cached_api_key = stored_key.strip()
+                    return self._cached_api_key
+                if self._cached_api_key:
+                    return self._cached_api_key
+                return ""
+            except Exception as e:
+                logging.debug(f"Keyring retrieval attempt {attempt + 1} failed: {e}")
+                time.sleep(0.05)
+
+        return self._cached_api_key or ""
 
     def init_database(self) -> None:
         """Initialize the SQLite database schema and handle version migrations."""
@@ -141,7 +197,8 @@ class ConfigManager:
                     old_cfg = json.load(f)
 
                 if "api_key" in old_cfg and old_cfg["api_key"]:
-                    keyring.set_password("OpenDictate", "api_key", old_cfg["api_key"])
+                    if keyring:
+                        keyring.set_password("OpenDictate", "api_key", old_cfg["api_key"])
                     del old_cfg["api_key"]
 
                 with sqlite3.connect(self.db_path) as conn:
@@ -168,29 +225,34 @@ class ConfigManager:
         except Exception as e:
             logging.error(f"Error loading configuration from DB: {e}", exc_info=True)
 
-        # Load API key securely from keyring
-        try:
-            stored_key = keyring.get_password("OpenDictate", "api_key")
-            cfg["api_key"] = stored_key if stored_key else ""
-        except Exception:
-            cfg["api_key"] = ""
+        # Load API key securely from keyring with retry and cache protection
+        cfg["api_key"] = self._get_api_key_safe()
 
         return cfg
 
-    def save_config(self, config: Dict[str, Any]) -> None:
-        """Save configuration dictionary into SQLite database and Keyring.
+    def save_config(self, config: Dict[str, Any], explicit_api_key_update: bool = False) -> None:
+        """Save configuration dictionary into SQLite database and Keyring safely.
 
         Args:
             config: Configuration dictionary to persist.
+            explicit_api_key_update: True if called from UI where API key was explicitly edited/cleared.
         """
-        api_key = config.get("api_key", "")
-        if api_key:
-            keyring.set_password("OpenDictate", "api_key", api_key)
-        else:
-            try:
-                keyring.delete_password("OpenDictate", "api_key")
-            except Exception:
-                pass
+        api_key = config.get("api_key")
+        if keyring:
+            if api_key and str(api_key).strip():
+                clean_key = str(api_key).strip()
+                if clean_key != self._cached_api_key:
+                    try:
+                        keyring.set_password("OpenDictate", "api_key", clean_key)
+                        self._cached_api_key = clean_key
+                    except Exception as e:
+                        logging.error(f"Error saving API key to keyring: {e}", exc_info=True)
+            elif explicit_api_key_update and api_key == "":
+                try:
+                    keyring.delete_password("OpenDictate", "api_key")
+                    self._cached_api_key = ""
+                except Exception as e:
+                    logging.debug(f"Error deleting API key from keyring: {e}")
 
         try:
             with sqlite3.connect(self.db_path) as conn:

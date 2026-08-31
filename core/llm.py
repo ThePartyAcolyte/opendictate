@@ -105,27 +105,113 @@ class LLMService:
 
             prompt_parts.append(f"Text to correct NOW:\n{text}")
 
-            gen_config = types.GenerateContentConfig(
-                temperature=float(config.get("llm_temperature", 0.7))
-            )
-            if config.get("llm_thinking", False):
-                gen_config.thinking_config = types.ThinkingConfig(thinking_budget=-1)
+            model_name = config.get("model", "gemini-3.1-flash-live-preview")
+            is_live_model = "live" in model_name.lower()
 
-            response = client.models.generate_content_stream(
-                model=config.get("model", "gemma-4-26b-a4b-it"),
-                contents=prompt_parts,
-                config=gen_config
-            )
+            if is_live_model:
+                return self._clean_text_live(
+                    client=client,
+                    model_name=model_name,
+                    prompt_parts=prompt_parts,
+                    config=config,
+                    on_chunk=on_chunk
+                )
+            else:
+                gen_config = types.GenerateContentConfig(
+                    temperature=float(config.get("llm_temperature", 0.7))
+                )
+                if config.get("llm_thinking", False):
+                    gen_config.thinking_config = types.ThinkingConfig(thinking_budget=-1)
 
-            cleaned_text = ""
-            for chunk in response:
-                if chunk.text:
-                    cleaned_text += chunk.text
-                    if on_chunk:
-                        on_chunk(cleaned_text)
+                response = client.models.generate_content_stream(
+                    model=model_name,
+                    contents=prompt_parts,
+                    config=gen_config
+                )
 
-            return cleaned_text.strip() if cleaned_text else text
+                cleaned_text = ""
+                for chunk in response:
+                    if chunk.text:
+                        cleaned_text += chunk.text
+                        if on_chunk:
+                            on_chunk(cleaned_text)
+
+                return cleaned_text.strip() if cleaned_text else text
 
         except Exception as e:
             logging.error(f"Gemini LLM processing error: {e}", exc_info=True)
             return text
+
+    def _clean_text_live(
+        self,
+        client: Any,
+        model_name: str,
+        prompt_parts: list,
+        config: Dict[str, Any],
+        on_chunk: Optional[Callable[[str], None]] = None
+    ) -> str:
+        """Process text cleanup using Gemini Live API WebSocket session.
+
+        Args:
+            client: genai.Client instance.
+            model_name: Live model identifier.
+            prompt_parts: Context and text prompt elements.
+            config: Application configuration dictionary.
+            on_chunk: Optional callback for streaming tokens to UI.
+
+        Returns:
+            Cleaned text string.
+        """
+        import asyncio
+        from google.genai import types
+
+        async def _run_live_session() -> str:
+            # Build combined text from string prompt parts (files handled separately if present)
+            text_payload = ""
+            media_files = []
+            for part in prompt_parts:
+                if isinstance(part, str):
+                    text_payload += f"{part}\n\n"
+                else:
+                    media_files.append(part)
+
+            thinking_level = config.get("llm_thinking_level", "minimal") if config.get("llm_thinking", False) else "minimal"
+            live_config = types.LiveConnectConfig(
+                response_modalities=["TEXT"],
+                generation_config=types.GenerateContentConfig(
+                    temperature=float(config.get("llm_temperature", 0.7)),
+                    thinking_config=types.ThinkingConfig(thinking_level=thinking_level) if config.get("llm_thinking", False) else None
+                )
+            )
+
+            cleaned_tokens = []
+            async with client.aio.live.connect(model=model_name, config=live_config) as session:
+                # Send context files if any
+                for media in media_files:
+                    await session.send(input=media)
+
+                # Send text correction prompt
+                await session.send(input=text_payload.strip(), end_of_turn=True)
+
+                async for response in session.receive():
+                    server_content = response.server_content
+                    if not server_content:
+                        continue
+
+                    if server_content.model_turn:
+                        for part in server_content.model_turn.parts:
+                            if part.text:
+                                cleaned_tokens.append(part.text)
+                                if on_chunk:
+                                    on_chunk("".join(cleaned_tokens))
+
+                    if server_content.turn_complete:
+                        break
+
+            return "".join(cleaned_tokens).strip()
+
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(_run_live_session())
+        finally:
+            loop.close()

@@ -37,12 +37,12 @@ class VADStreamSegmenter:
         # Configuration parameters with defaults tuned for interactive ASR
         cfg = config or {}
         self.min_duration: float = float(cfg.get("chunk_min_duration", 3.0))
-        self.silence_duration: float = float(cfg.get("chunk_silence_duration", 0.6))
+        self.silence_duration: float = float(cfg.get("chunk_silence_duration", 0.85))
         self.max_duration: float = float(cfg.get("chunk_max_duration", 30.0))
-        self.fallback_silence_duration: float = float(cfg.get("chunk_fallback_silence_duration", 0.4))
+        self.fallback_silence_duration: float = float(cfg.get("chunk_fallback_silence_duration", 0.5))
         self.search_window: float = float(cfg.get("chunk_search_window", 6.0))
-        self.speech_pad: float = float(cfg.get("chunk_speech_pad", 0.1))
-        self.min_energy_threshold: float = float(cfg.get("chunk_vad_energy_threshold", 0.012))
+        self.speech_pad: float = float(cfg.get("chunk_speech_pad", 0.3))
+        self.min_energy_threshold: float = float(cfg.get("chunk_vad_energy_threshold", 0.030))
 
         # Runtime state
         self.reset()
@@ -120,6 +120,14 @@ class VADStreamSegmenter:
                     self.current_silence_start = frame_time - self.frame_duration
 
             self.frames_history.append((frame_time, rms, is_speech))
+
+    def get_trailing_silence_duration(self, current_audio_time: float) -> float:
+        """Return the current ongoing silence duration in seconds."""
+        if self.current_silence_start is not None:
+            return max(0.0, current_audio_time - self.current_silence_start)
+        if self.last_speech_time > 0.0:
+            return max(0.0, current_audio_time - self.last_speech_time)
+        return 0.0
 
     def find_cut_point(self, current_audio_time: float, last_cut_time: float) -> Optional[float]:
         """Evaluate whether a natural or fallback chunk cut point has been reached.

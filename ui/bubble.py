@@ -20,16 +20,37 @@ class WaveformArea(Gtk.DrawingArea):
     """Custom Cairo drawing area that renders real-time audio levels or an indeterminate pulse."""
 
     def __init__(self, bar_count: int = 24) -> None:
+        """Initialize waveform drawing area.
+
+        Args:
+            bar_count: Number of vertical volume visualization bars (default 24).
+        """
         super().__init__()
         self.bar_count = bar_count
         self._levels: List[float] = [0.0] * self.bar_count
         self._is_indeterminate: bool = False
         self._pulse_pos: float = 0.0
         self._pulse_dir: int = 1
+        self.backend: str = "local_whisper"
         self.set_size_request(80, 20)
         self.connect("draw", self._on_draw)
 
+    def set_backend(self, backend: str) -> None:
+        """Set the active STT backend to adapt waveform color palette.
+
+        Args:
+            backend: 'gemini_live' or 'local_whisper'.
+        """
+        if self.backend != backend:
+            self.backend = backend
+            self.queue_draw()
+
     def set_indeterminate(self, enable: bool) -> None:
+        """Enable or disable indeterminate pulse mode (used during AI cleaning/transcription).
+
+        Args:
+            enable: True to render animated pulse line, False for audio bars.
+        """
         if self._is_indeterminate != enable:
             self._is_indeterminate = enable
             self._pulse_pos = 0.0
@@ -37,6 +58,7 @@ class WaveformArea(Gtk.DrawingArea):
             self.queue_draw()
 
     def update_pulse(self) -> None:
+        """Advance indeterminate pulse position for animation tick."""
         if not self._is_indeterminate:
             return
         self._pulse_pos += 0.05 * self._pulse_dir
@@ -49,16 +71,31 @@ class WaveformArea(Gtk.DrawingArea):
         self.queue_draw()
 
     def add_level(self, level: float) -> None:
+        """Push a new normalized audio level sample and schedule repaint.
+
+        Args:
+            level: Normalized audio energy float in [0.0, 1.0].
+        """
         self._levels.pop(0)
         self._levels.append(max(0.0, min(1.0, level)))
         self.queue_draw()
 
     def reset_levels(self) -> None:
+        """Clear all level history and reset indeterminate state."""
         self._levels = [0.0] * self.bar_count
         self._is_indeterminate = False
         self.queue_draw()
 
     def _on_draw(self, widget: Gtk.Widget, cr: Any) -> bool:
+        """Cairo draw signal callback to render audio bars or pulse.
+
+        Args:
+            widget: Drawing area widget.
+            cr: Cairo drawing context.
+
+        Returns:
+            Always returns False to propagate draw events.
+        """
         alloc = widget.get_allocation()
         w = float(alloc.width)
         h = float(alloc.height)
@@ -80,7 +117,10 @@ class WaveformArea(Gtk.DrawingArea):
             cr.stroke()
             return False
 
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.75)
+        if getattr(self, "backend", "local_whisper") == "gemini_live":
+            cr.set_source_rgba(0.36, 0.55, 0.96, 0.85)
+        else:
+            cr.set_source_rgba(1.0, 1.0, 1.0, 0.75)
         cr.set_line_width(2.0)
         cr.set_line_cap(cairo.LINE_CAP_ROUND)
 
@@ -110,6 +150,15 @@ class BubbleWindow:
         on_send: Optional[Callable[[], None]] = None,
         on_cancel: Optional[Callable[[], None]] = None
     ) -> None:
+        """Initialize floating overlay bubble window.
+
+        Args:
+            config: Application configuration dictionary.
+            i18n: Translator instance for localized text.
+            on_toggle_record_pause: Optional callback for record/pause button.
+            on_send: Optional callback for send button.
+            on_cancel: Optional callback for cancel button.
+        """
         self.config = config
         self.i18n = i18n
         self.on_toggle_record_pause = on_toggle_record_pause
@@ -307,10 +356,20 @@ class BubbleWindow:
             border-color: rgba(235, 77, 75, 0.7);
             color: #ff6b6b;
         }
+        #bubble-btn-record.recording.gemini-live {
+            background-color: rgba(108, 92, 231, 0.40);
+            border-color: rgba(124, 92, 231, 0.85);
+            color: #a29bfe;
+        }
         #bubble-btn-record.paused {
             background-color: rgba(243, 156, 18, 0.35);
             border-color: rgba(243, 156, 18, 0.7);
             color: #f1c40f;
+        }
+        #bubble-btn-record.paused.gemini-live {
+            background-color: rgba(92, 141, 246, 0.35);
+            border-color: rgba(92, 141, 246, 0.80);
+            color: #74b9ff;
         }
         #bubble-btn-send {
             color: #2ecc71;
@@ -330,7 +389,11 @@ class BubbleWindow:
         )
 
     def set_interactive_mode(self, enabled: bool) -> None:
-        """Toggle between interactive header mode and minimalist text-only OSD mode."""
+        """Toggle between interactive header mode and minimalist text-only OSD mode.
+
+        Args:
+            enabled: True for interactive controls, False for minimalist text OSD.
+        """
         self.interactive_mode = enabled
         if self.interactive_mode:
             self.header_box.show_all()
@@ -339,7 +402,11 @@ class BubbleWindow:
             self.text_view_scroll.show()
 
     def set_text_collapsed(self, collapsed: bool) -> None:
-        """Toggle text preview area visibility for compact floating capsule."""
+        """Toggle text preview area visibility for compact floating capsule.
+
+        Args:
+            collapsed: True to collapse text preview into a pill, False to expand.
+        """
         self.text_collapsed = collapsed
         if isinstance(self.config, dict):
             self.config["bubble_text_collapsed"] = self.text_collapsed
@@ -357,22 +424,50 @@ class BubbleWindow:
             self.icon_toggle.set_from_icon_name("pan-up-symbolic", Gtk.IconSize.BUTTON)
 
     def _on_record_pause_clicked(self, widget: Gtk.Button) -> None:
+        """Handle header record/pause button click.
+
+        Args:
+            widget: Button emitting the clicked event.
+        """
         if self.on_toggle_record_pause:
             self.on_toggle_record_pause()
 
     def _on_send_clicked(self, widget: Gtk.Button) -> None:
+        """Handle header send button click.
+
+        Args:
+            widget: Button emitting the clicked event.
+        """
         if self.on_send:
             self.on_send()
 
     def _on_cancel_clicked(self, widget: Gtk.Button) -> None:
+        """Handle header cancel button click.
+
+        Args:
+            widget: Button emitting the clicked event.
+        """
         if self.on_cancel:
             self.on_cancel()
 
     def _on_toggle_text_clicked(self, widget: Gtk.Button) -> None:
+        """Handle capsule collapse/expand toggle button click.
+
+        Args:
+            widget: Button emitting the clicked event.
+        """
         self.set_text_collapsed(not self.text_collapsed)
 
     def _on_button_press(self, widget: Gtk.Widget, event: Gdk.EventButton) -> bool:
-        """Handle window drag and resize interactions."""
+        """Handle window drag and resize interactions.
+
+        Args:
+            widget: Window widget receiving the event.
+            event: Mouse button event structure.
+
+        Returns:
+            Always returns False to permit default event handling.
+        """
         if event.button == 1:
             self.window.begin_move_drag(event.button, int(event.x_root), int(event.y_root), event.time)
             return False
@@ -382,7 +477,15 @@ class BubbleWindow:
         return False
 
     def _on_draw(self, widget: Gtk.Widget, cr: Any) -> bool:
-        """Draw rounded dark translucent background using Cairo."""
+        """Draw rounded dark translucent background using Cairo.
+
+        Args:
+            widget: Window widget being drawn.
+            cr: Cairo drawing context.
+
+        Returns:
+            Always returns False to permit child widget rendering.
+        """
         alloc = widget.get_allocation()
         w = float(alloc.width)
         h = float(alloc.height)
@@ -440,6 +543,11 @@ class BubbleWindow:
             self.pulse_timer_id = None
 
     def _blink_cursor(self) -> bool:
+        """Timer callback for blinking cursor animation.
+
+        Returns:
+            True to keep timer running, False if cursor is inactive.
+        """
         if not self.cursor_active:
             return False
         self.cursor_visible = not self.cursor_visible
@@ -448,6 +556,11 @@ class BubbleWindow:
         return True
 
     def _animate_step(self) -> bool:
+        """Timer callback advancing smooth word-by-word streaming animation.
+
+        Returns:
+            True to keep timer active, False if animation stopped.
+        """
         if not self.cursor_active:
             return False
 
@@ -472,6 +585,7 @@ class BubbleWindow:
         return True
 
     def _update_text_buffer(self) -> None:
+        """Update GtkTextBuffer contents and scroll to latest transcribed word."""
         if self.cursor_active:
             text_to_show = self.displayed_text + " ▌"
             self.text_buffer.set_text(text_to_show)
@@ -486,6 +600,11 @@ class BubbleWindow:
         self.text_view.scroll_mark_onscreen(mark)
 
     def _update_time_display(self) -> bool:
+        """Update status label elapsed time formatted as MM:SS.
+
+        Returns:
+            True to continue timer ticks, False if state is not active.
+        """
         if self.state not in ("RECORDING", "PAUSED"):
             return False
 
@@ -505,7 +624,12 @@ class BubbleWindow:
         return True
 
     def show_recording_state(self, start_time: float = 0.0, total_paused_time: float = 0.0) -> None:
-        """Configure layout for RECORDING state."""
+        """Configure layout and controls for RECORDING state.
+
+        Args:
+            start_time: Recording epoch timestamp in seconds.
+            total_paused_time: Cumulative paused seconds.
+        """
         if self.config.get("hide_bubble", False):
             return
 
@@ -521,9 +645,15 @@ class BubbleWindow:
         self._start_timers()
 
         self.waveform.reset_levels()
+        backend = self.config.get("stt_backend", "local_whisper") if isinstance(self.config, dict) else "local_whisper"
+        self.waveform.set_backend(backend)
         self.icon_record_pause.set_from_icon_name("media-playback-pause-symbolic", Gtk.IconSize.BUTTON)
         self.btn_record_pause.get_style_context().remove_class("paused")
         self.btn_record_pause.get_style_context().add_class("recording")
+        if backend == "gemini_live":
+            self.btn_record_pause.get_style_context().add_class("gemini-live")
+        else:
+            self.btn_record_pause.get_style_context().remove_class("gemini-live")
         self.btn_send.show()
         self.btn_cancel.show()
 
@@ -542,7 +672,13 @@ class BubbleWindow:
         self.window.show_all()
 
     def show_paused_state(self, start_time: float = 0.0, pause_start_time: float = 0.0, total_paused_time: float = 0.0) -> None:
-        """Configure layout for PAUSED state."""
+        """Configure layout and controls for PAUSED state.
+
+        Args:
+            start_time: Recording epoch timestamp.
+            pause_start_time: Epoch timestamp when pause began.
+            total_paused_time: Cumulative paused seconds.
+        """
         if self.config.get("hide_bubble", False):
             return
 
@@ -551,9 +687,15 @@ class BubbleWindow:
         self.pause_start_time = pause_start_time or time.time()
         self.total_paused_time = total_paused_time
 
+        backend = self.config.get("stt_backend", "local_whisper") if isinstance(self.config, dict) else "local_whisper"
+        self.waveform.set_backend(backend)
         self.icon_record_pause.set_from_icon_name("media-record-symbolic", Gtk.IconSize.BUTTON)
         self.btn_record_pause.get_style_context().remove_class("recording")
         self.btn_record_pause.get_style_context().add_class("paused")
+        if backend == "gemini_live":
+            self.btn_record_pause.get_style_context().add_class("gemini-live")
+        else:
+            self.btn_record_pause.get_style_context().remove_class("gemini-live")
 
         self._update_time_display()
         if self.clock_timer_id:
@@ -563,7 +705,11 @@ class BubbleWindow:
         self.window.show_all()
 
     def show_processing_state(self, status_text: str = "") -> None:
-        """Configure layout for TRANSCRIBING / CLEANING processing state."""
+        """Configure layout for TRANSCRIBING / CLEANING processing state.
+
+        Args:
+            status_text: Custom localized status string (e.g. 'Transcribing...', 'Cleaning...').
+        """
         if self.config.get("hide_bubble", False):
             return
 
@@ -589,12 +735,20 @@ class BubbleWindow:
         self.window.show_all()
 
     def update_audio_level(self, level: float) -> None:
-        """Update live waveform level."""
+        """Update live waveform level.
+
+        Args:
+            level: Normalized audio RMS level float in [0.0, 1.0].
+        """
         if self.state == "RECORDING":
             self.waveform.add_level(level)
 
     def set_live_text(self, text: str) -> None:
-        """Update target preview text and queue new words for smooth streaming animation."""
+        """Update target preview text and queue new words for smooth streaming animation.
+
+        Args:
+            text: Real-time transcription string.
+        """
         if self.config.get("hide_bubble", False):
             return
 
@@ -617,7 +771,7 @@ class BubbleWindow:
         self._start_timers()
 
     def hide(self) -> None:
-        """Hide the GTK bubble window and reset state."""
+        """Hide the GTK bubble window and reset animation state."""
         self._stop_timers()
         self.state = "IDLE"
         self.displayed_text = ""

@@ -1,3 +1,9 @@
+"""Stream Deck and OpenDeck WebSocket bridge plugin for OpenDictate.
+
+Handles rotary encoder gestures (clicks, double taps, long presses, dialing)
+and standard hardware buttons, syncing daemon state in real-time.
+"""
+
 import sys
 import json
 import asyncio
@@ -57,6 +63,7 @@ double_tap_tasks = {}
 double_tap_counts = {}
 
 def execute_primary_action():
+    """Execute primary record / pause toggle action via OpenDictate CLI."""
     state_data = get_daemon_state()
     logging.debug(f"Executing primary action, daemon state: {state_data.get('state')}")
     if state_data.get("state") == "RECORDING":
@@ -65,6 +72,14 @@ def execute_primary_action():
         subprocess.Popen([CLI_BIN, "--record"])
 
 async def execute_secondary_action(ws, action_type, profile, dev_id):
+    """Execute secondary encoder gesture action (open settings or switch Stream Deck profile).
+
+    Args:
+        ws: OpenDeck WebSocket connection.
+        action_type: Configured action ('settings' or 'switch_profile').
+        profile: Target profile name if action is 'switch_profile'.
+        dev_id: Stream Deck hardware device identifier.
+    """
     logging.debug(f"Executing secondary action: {action_type}")
     if action_type == "settings":
         subprocess.Popen([CLI_BIN, "--settings"])
@@ -81,6 +96,12 @@ async def execute_secondary_action(ws, action_type, profile, dev_id):
             }))
 
 def update_encoder_settings(context, settings):
+    """Parse and cache Property Inspector settings for a given encoder context.
+
+    Args:
+        context: Unique action context string.
+        settings: Settings dictionary received from OpenDeck Property Inspector.
+    """
     if not settings:
         return
     current = encoder_settings.get(context, {})
@@ -118,6 +139,11 @@ force_update = False
 STATE_FILE = "/tmp/opendictate_state.json"
 
 def get_daemon_state():
+    """Read latest daemon telemetry exported to /tmp/opendictate_state.json.
+
+    Returns:
+        Dictionary containing state, model, level, and toggle flags.
+    """
     for _ in range(3):
         try:
             if os.path.exists(STATE_FILE):
@@ -139,6 +165,15 @@ def get_daemon_state():
     }
 
 def generate_progress_image(level, phase):
+    """Generate dynamic base64 PNG icon with audio level meter or processing animation.
+
+    Args:
+        level: Normalized audio energy float [0.0, 1.0].
+        phase: Current daemon phase string (e.g. 'RECORDING', 'TRANSCRIBING', 'CLEANING').
+
+    Returns:
+        Base64-encoded data URI string for Stream Deck setImage event.
+    """
     img = Image.new('RGB', (72, 72), color=(20, 20, 20))
     draw = ImageDraw.Draw(img)
     
@@ -161,6 +196,11 @@ def generate_progress_image(level, phase):
     return f"data:image/png;base64,{img_str}"
 
 async def watch_state(ws):
+    """Asynchronous background loop pushing live daemon state and audio meters to Stream Deck.
+
+    Args:
+        ws: OpenDeck WebSocket connection.
+    """
     last_state = None
     last_time = None
     last_level = None

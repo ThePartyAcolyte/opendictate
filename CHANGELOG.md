@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 1.2.0-rc1 (Nightly / Dev)
+
+### Architectural Note: Gemini API Strategy
+- **Gemini Live Speech-to-Text (`gemini-3.5-transcribe-live`)**: Added to provide continuous bidirectional real-time audio transcription over WebSockets. Offloads heavy neural compute from the host system, eliminating local GPU/CPU load and reducing daemon RAM consumption from ~1.8 GB to <70 MB.
+- **Gemini Flash & Flash-Lite for AI Cleanup (`gemini-3.1-flash-live-preview`)**: Selected as the primary LLM engine for post-transcription cleaning due to its ultra-low time-to-first-token latency (<200ms), high throughput, and generous free-tier API quotas. Delivers fast, intelligent text formatting without requiring local LLM execution.
+
+### Added
+- **Gemini Live 3.5 Streaming STT (`core/gemini_live_engine.py`)**: Full bidirectional WebSocket streaming transcription engine with native support for `SMART` (intelligent punctuation/formatting) and `VERBATIM` (exact acoustic fidelity) modes via `google-genai>=2.20.0`.
+- **Dynamic Faster-Whisper Memory Offloading (`WhisperEngine.unload_model`)**: Automatically unloads local Faster-Whisper models from RAM when switching to Gemini Live, freeing 1.5 GB to 3.5 GB of memory while allowing on-demand fallback if cloud services are unavailable.
+- **Configurable LLM Thinking Budget (`llm_thinking_level`)**: Settings control enabling granular adjustment of thinking reasoning depth (`minimal`, `low`, `medium`, `high`) for Gemini 2.5/3.0 models during AI cleanup.
+- **Subtle Visual Feedback Palette**: Distinct, non-intrusive color cues across the UI:
+  - **GNOME Shell Indicator**: Standby microphone icon illuminates in Gemini Diamond Blue (`#5c8df6`) and recording turns purple (`#7c5ce7`) when Live STT is active.
+  - **Floating OSD Bubble**: Waveform energy bars rendered in Gemini blue/indigo (`rgba(92, 141, 246, 0.85)`), and recording toggle styled in translucent purple.
+- **Hardened GNOME Keyring Credential Persistence (`core/config.py`)**: Protected API keys from accidental deletion during generic configuration saves and implemented exponential-backoff retries with in-memory caching (`_get_api_key_safe`) to eliminate cold-boot D-Bus race conditions.
+- **Modular Devlog Architecture (`devlog/`)**: Established structured per-session engineering log files to track architectural decisions, benchmarks, and ongoing development history.
+
+### Experimental (WIP / Inactive by default)
+- **Acoustic Echo Cancellation & Playback Subtraction (`core/aec.py`, `core/audio_concurrency.py`)**: Normalized Least Mean Squares (NLMS) adaptive filter tapping PipeWire monitor sinks to subtract background music and desktop video audio from the microphone stream prior to VAD and speech processing (`aec_enabled: false`).
+- **Background Voice Command Engine (`core/voice_commands.py`, `ui/sample_recorder.py`)**: Continuous idle-state voice trigger recognizer with multi-phrase template distance matching and interactive custom sample recorder UI (`voice_commands_enabled: false`).
+
 ## [1.1.0] - 2026-08-25
 
 ### Added

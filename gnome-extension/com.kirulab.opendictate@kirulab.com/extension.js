@@ -20,6 +20,14 @@ class Waveform extends St.DrawingArea {
         this._isIndeterminate = false;
         this._pulsePos = 0;
         this._pulseDir = 1;
+        this._backend = 'local_whisper';
+    }
+
+    setBackend(backend) {
+        if (this._backend !== backend) {
+            this._backend = backend;
+            this.queue_repaint();
+        }
     }
 
     setIndeterminate(enable) {
@@ -73,7 +81,11 @@ class Waveform extends St.DrawingArea {
             return;
         }
 
-        cr.setSourceRGBA(1.0, 1.0, 1.0, 0.7);
+        if (this._backend === 'gemini_live') {
+            cr.setSourceRGBA(0.36, 0.55, 0.96, 0.85);
+        } else {
+            cr.setSourceRGBA(1.0, 1.0, 1.0, 0.7);
+        }
         cr.setLineWidth(2.0);
         cr.setLineCap(1); // ROUND
         
@@ -392,6 +404,8 @@ class OpenDictateIndicator extends PanelMenu.Button {
         this._updatingToggles = false;
         
         let icon = this._micIcon;
+        let isGemini = (stateData.stt_backend === "gemini_live");
+        this._waveform.setBackend(stateData.stt_backend || "local_whisper");
         
         if (state === "OFFLINE") {
             this._stopIndeterminateTimer();
@@ -400,6 +414,7 @@ class OpenDictateIndicator extends PanelMenu.Button {
             icon.remove_style_class_name('recording');
             icon.remove_style_class_name('paused');
             icon.remove_style_class_name('processing');
+            icon.remove_style_class_name('gemini-mode');
             icon.add_style_class_name('offline');
             
             this._waveform.hide();
@@ -416,6 +431,11 @@ class OpenDictateIndicator extends PanelMenu.Button {
             this._waveform.setIndeterminate(false);
             icon.icon_name = 'media-record-symbolic';
             icon.add_style_class_name('recording');
+            if (isGemini) {
+                icon.add_style_class_name('gemini-mode');
+            } else {
+                icon.remove_style_class_name('gemini-mode');
+            }
             icon.remove_style_class_name('paused');
             icon.remove_style_class_name('processing');
             icon.remove_style_class_name('offline');
@@ -436,6 +456,11 @@ class OpenDictateIndicator extends PanelMenu.Button {
             icon.icon_name = 'media-playback-pause-symbolic';
             icon.remove_style_class_name('recording');
             icon.add_style_class_name('paused');
+            if (isGemini) {
+                icon.add_style_class_name('gemini-mode');
+            } else {
+                icon.remove_style_class_name('gemini-mode');
+            }
             icon.remove_style_class_name('processing');
             icon.remove_style_class_name('offline');
             
@@ -451,6 +476,11 @@ class OpenDictateIndicator extends PanelMenu.Button {
             icon.remove_style_class_name('recording');
             icon.remove_style_class_name('paused');
             icon.add_style_class_name('processing');
+            if (isGemini) {
+                icon.add_style_class_name('gemini-mode');
+            } else {
+                icon.remove_style_class_name('gemini-mode');
+            }
             icon.remove_style_class_name('offline');
             
             this._waveform.setIndeterminate(true);
@@ -483,12 +513,26 @@ class OpenDictateIndicator extends PanelMenu.Button {
             icon.remove_style_class_name('paused');
             icon.remove_style_class_name('processing');
             icon.remove_style_class_name('offline');
+            if (isGemini) {
+                icon.add_style_class_name('gemini-mode');
+            } else {
+                icon.remove_style_class_name('gemini-mode');
+            }
             
             this._waveform.hide();
             this._timeLabel.hide();
             this._sendButton.hide();
             this._cancelButton.hide();
             this._stopTimer();
+        }
+
+        // Microphone saturation / health subtle indicator
+        if (stateData.mic_health === "CLIPPED") {
+            icon.add_style_class_name('mic-clipped');
+            this._mainButton.add_style_class_name('mic-clipped');
+        } else {
+            icon.remove_style_class_name('mic-clipped');
+            this._mainButton.remove_style_class_name('mic-clipped');
         }
 
         if ((stateData.send_status === "pasting" || (this._previousState && this._previousState !== "IDLE" && state === "IDLE")) && stateData.restore_window_focus) {

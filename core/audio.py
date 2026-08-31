@@ -24,15 +24,24 @@ class AudioRecorder:
         self.audio_buffer = bytearray()
         self.audio_level: float = 0.0
 
-    def start_recording(self) -> None:
-        """Spawn the ALSA arecord process and open local PCM dump file."""
+    def start_recording(self, device: Optional[str] = None) -> None:
+        """Spawn the ALSA arecord process and open local PCM dump file.
+
+        Args:
+            device: Optional ALSA/Pulse device name (e.g. 'default' or echo-cancel node).
+        """
         self.audio_buffer.clear()
         self.audio_level = 0.0
 
+        cmd = ["arecord", "-t", "raw", "-f", "S16_LE", "-c", "1", "-r", "16000"]
+        if device and device != "default":
+            cmd.extend(["-D", device])
+
         self.record_proc = subprocess.Popen(
-            ["arecord", "-t", "raw", "-f", "S16_LE", "-c", "1", "-r", "16000"],
+            cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
         )
         self.audio_file_handle = open(AUDIO_FILE_PCM, "wb")
 
@@ -85,16 +94,18 @@ class AudioRecorder:
         return True
 
     def stop_recording(self) -> None:
-        """Terminate the arecord process safely and close file handles."""
+        """Terminate the arecord process group safely and close file handles."""
         if self.record_proc:
-            if self.record_proc.poll() is None:
-                self.record_proc.send_signal(signal.SIGCONT)
-                self.record_proc.terminate()
-                try:
-                    self.record_proc.wait(timeout=2.0)
-                except subprocess.TimeoutExpired:
-                    self.record_proc.kill()
+            proc = self.record_proc
             self.record_proc = None
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+                proc.wait(timeout=0.3)
+            except Exception:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except Exception:
+                    pass
 
         if self.audio_file_handle:
             try:

@@ -5,7 +5,19 @@ set -e
 # OpenDictate Debian (.deb) Package Builder
 # =============================================================================
 
-VERSION=$(python3 -c 'import sys; sys.path.insert(0, "."); from core.__version__ import __version__; print(__version__)' 2>/dev/null || echo "1.0.0")
+NIGHTLY=false
+if [ "$1" = "--nightly" ]; then
+    NIGHTLY=true
+fi
+
+RAW_VERSION=$(python3 -c 'import sys; sys.path.insert(0, "."); from core.__version__ import __version__; print(__version__)' 2>/dev/null || echo "1.1.0")
+if [ "$NIGHTLY" = "true" ]; then
+    BUILD_DATE=$(date +%Y%m%d)
+    VERSION="${RAW_VERSION}-nightly.${BUILD_DATE}"
+else
+    VERSION="${RAW_VERSION}"
+fi
+
 PKG_NAME="opendictate"
 ARCH="all"
 BUILD_DIR="$(pwd)/build_deb"
@@ -35,9 +47,26 @@ cp -r ui "${PKG_DIR}/opt/opendictate/"
 cp -r plugins "${PKG_DIR}/opt/opendictate/"
 cp -r img "${PKG_DIR}/opt/opendictate/"
 
+# Sincronizar versión en manifest de OpenDeck y GNOME Extension
+if [ -f "${PKG_DIR}/opt/opendictate/plugins/com.kirulab.opendictate.sdplugin/manifest.json" ]; then
+    sed -i "s/\"Version\": \".*\"/\"Version\": \"${VERSION}\"/" "${PKG_DIR}/opt/opendictate/plugins/com.kirulab.opendictate.sdplugin/manifest.json"
+fi
+
 # 2. Copiar Extensión de GNOME Shell
 echo "🧩 Copiando Extensión de GNOME Shell a /usr/share/gnome-shell/extensions..."
 cp -r gnome-extension/com.kirulab.opendictate@kirulab.com/* "${PKG_DIR}/usr/share/gnome-shell/extensions/com.kirulab.opendictate@kirulab.com/"
+
+if [ -f "${PKG_DIR}/usr/share/gnome-shell/extensions/com.kirulab.opendictate@kirulab.com/metadata.json" ]; then
+    python3 -c "
+import json
+p = '${PKG_DIR}/usr/share/gnome-shell/extensions/com.kirulab.opendictate@kirulab.com/metadata.json'
+with open(p, 'r') as f:
+    d = json.load(f)
+d['version-name'] = '${VERSION}'
+with open(p, 'w') as f:
+    json.dump(d, f, indent=2)
+"
+fi
 
 # 3. Copiar Íconos y Desktop Entry
 echo "🖼️ Configurando acceso directo e íconos..."

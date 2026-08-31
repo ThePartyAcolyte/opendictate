@@ -23,7 +23,10 @@ from core.hardware import (
     detect_desktop_environment,
     recommend_whisper_model
 )
+from core.voice_commands import VoiceCommandManager
+from core.aec import EchoCancelManager, AcousticCalibrator
 from i18n import get_translator
+
 
 WIZARD_CSS = b"""
 /* OpenDictate Wizard Modern Dark UI (Matching Settings) */
@@ -155,6 +158,12 @@ class FirstRunWizard(Gtk.Window):
         config_manager: Any,
         on_finish: Optional[Callable[[Dict[str, Any]], None]] = None
     ) -> None:
+        """Initialize onboarding wizard window and load system diagnostics.
+
+        Args:
+            config_manager: ConfigManager instance to load and persist configurations.
+            on_finish: Optional callback invoked when user finishes setup with final config.
+        """
         super().__init__(title="OpenDictate")
         self.set_default_size(760, 600)
         self.set_position(Gtk.WindowPosition.CENTER)
@@ -175,15 +184,20 @@ class FirstRunWizard(Gtk.Window):
             self.ram_gb, self.gpu_info["has_gpu"]
         )
 
+        self.voice_commands = VoiceCommandManager(self.config)
+        self.aec = EchoCancelManager()
+        self.wizard_cmd_labels: Dict[str, Gtk.Label] = {}
+
         self.selected_bubble_mode = "text" if self.is_gnome else "interactive"
         self.current_step = 0
-        self.total_steps = 7
+        self.total_steps = 8
 
         self._apply_css()
         self._build_ui()
         self.show_all()
 
     def _apply_css(self) -> None:
+        """Inject modern dark styling into application screen style context."""
         css_provider = Gtk.CssProvider()
         css_provider.load_from_data(WIZARD_CSS)
         screen = Gdk.Screen.get_default()
@@ -193,6 +207,7 @@ class FirstRunWizard(Gtk.Window):
             )
 
     def _build_ui(self) -> None:
+        """Construct wizard header, breadcrumb navigation, content stack, and footer."""
         for child in self.get_children():
             self.remove(child)
 
@@ -221,6 +236,7 @@ class FirstRunWizard(Gtk.Window):
             self.i18n.t("wizard_step_language"),
             self.i18n.t("wizard_step_hardware"),
             self.i18n.t("wizard_step_integration"),
+            self.i18n.t("wizard_step_voice_commands"),
             self.i18n.t("wizard_step_ai"),
             self.i18n.t("wizard_step_shortcuts"),
             self.i18n.t("wizard_step_bubble"),
@@ -243,14 +259,15 @@ class FirstRunWizard(Gtk.Window):
         self.stack.set_transition_duration(200)
         self.main_vbox.pack_start(self.stack, True, True, 0)
 
-        # Build 7 Pages in logical re-ordered flow
-        self._build_page_language()      # Step 0
-        self._build_page_hardware()      # Step 1
-        self._build_page_integration()   # Step 2
-        self._build_page_ai()            # Step 3
-        self._build_page_shortcuts()     # Step 4
-        self._build_page_bubble()        # Step 5
-        self._build_page_finish()        # Step 6
+        # Build 8 Pages in logical re-ordered flow
+        self._build_page_language()        # Step 0
+        self._build_page_hardware()        # Step 1
+        self._build_page_integration()     # Step 2
+        self._build_page_voice_commands()  # Step 3
+        self._build_page_ai()              # Step 4
+        self._build_page_shortcuts()       # Step 5
+        self._build_page_bubble()          # Step 6
+        self._build_page_finish()          # Step 7
 
         # ---------------------------------------------------------
         # Footer
@@ -277,6 +294,7 @@ class FirstRunWizard(Gtk.Window):
     # Step 0: Language Selection & Welcome (Multi-language)
     # -------------------------------------------------------------------------
     def _build_page_language(self) -> None:
+        """Construct Step 0 language selection radio list."""
         scroll = Gtk.ScrolledWindow()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_top(20)
@@ -323,6 +341,12 @@ class FirstRunWizard(Gtk.Window):
         self.stack.add_named(scroll, "step_0")
 
     def _on_language_toggled(self, button: Gtk.RadioButton, lang: str) -> None:
+        """Handle language radio selection toggle and reload localized strings.
+
+        Args:
+            button: RadioButton emitting signal.
+            lang: Selected language code (e.g. 'es', 'en', 'de', 'fr').
+        """
         if button.get_active() and self.selected_lang != lang:
             self.selected_lang = lang
             self.i18n = get_translator(lang)
@@ -337,6 +361,7 @@ class FirstRunWizard(Gtk.Window):
     # Step 1: Hardware & Whisper Model
     # -------------------------------------------------------------------------
     def _build_page_hardware(self) -> None:
+        """Construct Step 1 hardware diagnostic report and model recommendation view."""
         scroll = Gtk.ScrolledWindow()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_top(16)
@@ -430,6 +455,7 @@ class FirstRunWizard(Gtk.Window):
     # Step 2: Desktop Integration (Binary Exclusive Choice)
     # -------------------------------------------------------------------------
     def _build_page_integration(self) -> None:
+        """Construct Step 2 desktop integration selector (GNOME Extension vs Tray AppIndicator)."""
         scroll = Gtk.ScrolledWindow()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_top(16)
@@ -469,9 +495,139 @@ class FirstRunWizard(Gtk.Window):
         self.stack.add_named(scroll, "step_2")
 
     # -------------------------------------------------------------------------
-    # Step 3: AI Post-Processing & Gemini / Gemma Setup
+    # Step 3: Voice Commands & Wake Word Enrollment
+    # -------------------------------------------------------------------------
+    def _build_page_voice_commands(self) -> None:
+        """Construct Step 3 voice commands enrollment and AEC calibration."""
+        scroll = Gtk.ScrolledWindow()
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_margin_top(16)
+        box.set_margin_bottom(16)
+        box.set_margin_left(28)
+        box.set_margin_right(28)
+        scroll.add(box)
+
+        # Header card
+        card_hdr = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card_hdr.get_style_context().add_class("wizard-card")
+
+        t_lbl = Gtk.Label(label=self.i18n.t("wizard_voice_title"), xalign=0)
+        t_lbl.get_style_context().add_class("card-title")
+        card_hdr.pack_start(t_lbl, False, False, 0)
+
+        s_lbl = Gtk.Label(label=self.i18n.t("wizard_voice_subtitle"), xalign=0)
+        s_lbl.set_line_wrap(True)
+        s_lbl.get_style_context().add_class("card-desc")
+        card_hdr.pack_start(s_lbl, False, False, 0)
+
+        # Switch to enable/disable
+        sw_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        sw_box.set_margin_top(8)
+        sw_lbl = Gtk.Label(label=self.i18n.t("lbl_voice_commands_enabled"), xalign=0)
+        sw_lbl.get_style_context().add_class("card-title")
+        sw_box.pack_start(sw_lbl, True, True, 0)
+
+        self.sw_voice = Gtk.Switch()
+        self.sw_voice.set_active(self.config.get("voice_commands_enabled", True))
+        self.sw_voice.connect("notify::active", lambda sw, p: self.config.update({"voice_commands_enabled": sw.get_active()}))
+        sw_box.pack_end(self.sw_voice, False, False, 0)
+        card_hdr.pack_start(sw_box, False, False, 0)
+
+        # Calibration Card (Piso de Ruido / Sensibilidad)
+        card_noise = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_noise.get_style_context().add_class("wizard-card")
+
+        n_title = Gtk.Label(label=self.i18n.t("group_noise_calibration"), xalign=0)
+        n_title.get_style_context().add_class("card-title")
+        card_noise.pack_start(n_title, False, False, 0)
+
+        n_desc = Gtk.Label(
+            label=self.i18n.t("desc_noise_calibration"),
+            xalign=0
+        )
+        n_desc.get_style_context().add_class("card-desc")
+        card_noise.pack_start(n_desc, False, False, 0)
+
+        n_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.wizard_noise_lbl = Gtk.Label(
+            label=f"Piso: {self.config.get('voice_vad_noise_floor', 0.030):.3f} | Umbral: {self.config.get('voice_vad_threshold', 0.075):.3f}",
+            xalign=0
+        )
+        self.wizard_noise_lbl.get_style_context().add_class("card-desc")
+        n_row.pack_start(self.wizard_noise_lbl, True, True, 0)
+
+        btn_calib_noise = Gtk.Button(label=self.i18n.t("btn_calibrate_noise"))
+        btn_calib_noise.get_style_context().add_class("btn-secondary")
+        btn_calib_noise.connect("clicked", self._on_wizard_calibrate_noise)
+        n_row.pack_end(btn_calib_noise, False, False, 0)
+        card_noise.pack_start(n_row, False, False, 0)
+
+        box.pack_start(card_noise, False, False, 0)
+
+        # 4 Commands card
+        card_cmds = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        card_cmds.get_style_context().add_class("wizard-card")
+
+        action_keys = [
+            ("START", "voice_cmd_start"),
+            ("SEND", "voice_cmd_send"),
+            ("PAUSE", "voice_cmd_pause"),
+            ("CANCEL", "voice_cmd_cancel"),
+        ]
+        for action, str_key in action_keys:
+            r_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            r_lbl = Gtk.Label(label=self.i18n.t(str_key), xalign=0)
+            r_lbl.get_style_context().add_class("card-title")
+            r_box.pack_start(r_lbl, True, True, 0)
+
+            cnt = len(self.voice_commands.templates.get(action, []))
+            cnt_lbl = Gtk.Label(label=f"{cnt}/3", xalign=1)
+            cnt_lbl.get_style_context().add_class("dim-label")
+            self.wizard_cmd_labels[action] = cnt_lbl
+            r_box.pack_start(cnt_lbl, False, False, 4)
+
+            rec_btn = Gtk.Button(label=self.i18n.t("btn_record_sample"))
+            rec_btn.get_style_context().add_class("btn-secondary")
+            rec_btn.connect("clicked", lambda b, act=action: self._record_wizard_sample(act, b))
+            r_box.pack_start(rec_btn, False, False, 0)
+
+            clr_btn = Gtk.Button(label=self.i18n.t("btn_clear_samples"))
+            clr_btn.get_style_context().add_class("btn-danger-outline")
+            clr_btn.connect("clicked", lambda b, act=action: self._clear_wizard_sample(act))
+            r_box.pack_start(clr_btn, False, False, 0)
+
+            card_cmds.pack_start(r_box, False, False, 0)
+
+        box.pack_start(card_cmds, False, False, 0)
+
+        # AEC Calibration card
+        card_calib = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card_calib.get_style_context().add_class("wizard-card")
+
+        calib_title = Gtk.Label(label=self.i18n.t("group_aec_calibration"), xalign=0)
+        calib_title.get_style_context().add_class("card-title")
+        card_calib.pack_start(calib_title, False, False, 0)
+
+        c_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.calib_res_lbl = Gtk.Label(label="--", xalign=0)
+        self.calib_res_lbl.get_style_context().add_class("card-desc")
+        c_row.pack_start(self.calib_res_lbl, True, True, 0)
+
+        calib_btn = Gtk.Button(label=self.i18n.t("btn_calibrate_aec"))
+        calib_btn.get_style_context().add_class("btn-secondary")
+        calib_btn.connect("clicked", self._on_wizard_calibrate_aec)
+        c_row.pack_end(calib_btn, False, False, 0)
+        card_calib.pack_start(c_row, False, False, 0)
+
+        box.pack_start(card_calib, False, False, 0)
+
+        self.stack.add_named(scroll, "step_3")
+
+    # -------------------------------------------------------------------------
+    # Step 4: AI Post-Processing & Gemini / Gemma Setup
     # -------------------------------------------------------------------------
     def _build_page_ai(self) -> None:
+        """Construct Step 3 AI post-processing and Google Gemini API setup page."""
         scroll = Gtk.ScrolledWindow()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_top(16)
@@ -537,6 +693,18 @@ class FirstRunWizard(Gtk.Window):
         key_hbox.pack_end(self.api_key_entry, True, True, 0)
         self.ai_details_box.pack_start(key_hbox, False, False, 2)
 
+        # STT Engine Selection
+        stt_backend_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        stt_backend_lbl = Gtk.Label(label=self.i18n.t("lbl_stt_backend"), xalign=0)
+        stt_backend_row.pack_start(stt_backend_lbl, False, False, 0)
+
+        self.stt_backend_combo = Gtk.ComboBoxText()
+        self.stt_backend_combo.append("local_whisper", self.i18n.t("stt_backend_local"))
+        self.stt_backend_combo.append("gemini_live", self.i18n.t("stt_backend_gemini_live"))
+        self.stt_backend_combo.set_active_id(self.config.get("stt_backend", "local_whisper"))
+        stt_backend_row.pack_end(self.stt_backend_combo, True, True, 0)
+        self.ai_details_box.pack_start(stt_backend_row, False, False, 2)
+
         # Model Selector / Entry Row
         model_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         model_label = Gtk.Label(label=self.i18n.t("wizard_ai_model_label"), xalign=0)
@@ -544,14 +712,13 @@ class FirstRunWizard(Gtk.Window):
 
         self.ai_model_combo = Gtk.ComboBoxText.new_with_entry()
         suggested_models = [
+            "gemini-3.1-flash-live-preview",
             "gemma-4-26b-a4b-it",
-            "gemini-2.5-flash-lite",
-            "gemini-2.5-flash",
         ]
         for mod in suggested_models:
             self.ai_model_combo.append_text(mod)
 
-        current_model = self.config.get("model", "gemma-4-26b-a4b-it")
+        current_model = self.config.get("model", "gemini-3.1-flash-live-preview")
         self.ai_model_combo.get_child().set_text(current_model)
         model_row.pack_end(self.ai_model_combo, True, True, 0)
         self.ai_details_box.pack_start(model_row, False, False, 2)
@@ -569,9 +736,15 @@ class FirstRunWizard(Gtk.Window):
         card_ai.pack_start(opt_note, False, False, 2)
 
         box.pack_start(card_ai, False, False, 0)
-        self.stack.add_named(scroll, "step_3")
+        self.stack.add_named(scroll, "step_4")
 
     def _on_ai_switch_toggled(self, switch: Gtk.Switch, gparam: Any) -> None:
+        """Handle AI master toggle switch state change.
+
+        Args:
+            switch: Switch widget being toggled.
+            gparam: GObject property parameter specification.
+        """
         is_active = switch.get_active()
         if hasattr(self, 'ai_details_box'):
             self.ai_details_box.set_sensitive(is_active)
@@ -582,6 +755,7 @@ class FirstRunWizard(Gtk.Window):
     # Step 4: OpenDeck & Keyboard Shortcuts
     # -------------------------------------------------------------------------
     def _build_page_shortcuts(self) -> None:
+        """Construct Step 4 shortcuts and OpenDeck plugin installation card."""
         scroll = Gtk.ScrolledWindow()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_top(16)
@@ -655,9 +829,17 @@ class FirstRunWizard(Gtk.Window):
             card_cli.pack_start(row_box, False, False, 0)
 
         box.pack_start(card_cli, False, False, 0)
-        self.stack.add_named(scroll, "step_4")
+        self.stack.add_named(scroll, "step_5")
 
     def _create_copy_callback(self, text: str):
+        """Create a clipboard copy callback for shortcut command lines.
+
+        Args:
+            text: Command string to copy.
+
+        Returns:
+            Callback function taking a Gtk.Button.
+        """
         def _cb(btn: Gtk.Button):
             clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
             clipboard.set_text(text, -1)
@@ -669,6 +851,7 @@ class FirstRunWizard(Gtk.Window):
     # Step 5: Floating Bubble Mode (2x2 Visual Grid with 4 Selectable Options)
     # -------------------------------------------------------------------------
     def _build_page_bubble(self) -> None:
+        """Construct Step 5 2x2 visual card grid for bubble mode selection."""
         scroll = Gtk.ScrolledWindow()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.set_margin_top(14)
@@ -800,13 +983,19 @@ class FirstRunWizard(Gtk.Window):
         box.pack_start(grid, True, True, 0)
         self._update_bubble_cards_ui()
 
-        self.stack.add_named(scroll, "step_5")
+        self.stack.add_named(scroll, "step_6")
 
     def _select_bubble_mode(self, mode: str) -> None:
+        """Set active bubble mode and refresh card visual selection styles.
+
+        Args:
+            mode: Bubble mode identifier ('text', 'interactive', 'compact', 'none').
+        """
         self.selected_bubble_mode = mode
         self._update_bubble_cards_ui()
 
     def _update_bubble_cards_ui(self) -> None:
+        """Synchronize CSS active highlight classes across bubble mode preview cards."""
         cards = {
             "text": getattr(self, "card_text", None),
             "interactive": getattr(self, "card_interactive", None),
@@ -825,6 +1014,7 @@ class FirstRunWizard(Gtk.Window):
     # Step 6: General Preferences & Finish
     # -------------------------------------------------------------------------
     def _build_page_finish(self) -> None:
+        """Construct Step 6 general preferences toggles and completion banner."""
         scroll = Gtk.ScrolledWindow()
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         box.set_margin_top(16)
@@ -910,12 +1100,13 @@ class FirstRunWizard(Gtk.Window):
         card_done.pack_start(done_desc, False, False, 0)
 
         box.pack_start(card_done, False, False, 0)
-        self.stack.add_named(scroll, "step_6")
+        self.stack.add_named(scroll, "step_7")
 
     # -------------------------------------------------------------------------
     # Actions & Step Navigation
     # -------------------------------------------------------------------------
     def _update_step_view(self) -> None:
+        """Update breadcrumb indicators and button states according to current step."""
         self.stack.set_visible_child_name(f"step_{self.current_step}")
         self.btn_back.set_sensitive(self.current_step > 0)
 
@@ -938,6 +1129,11 @@ class FirstRunWizard(Gtk.Window):
                 ctx.add_class("completed")
 
     def _on_next_clicked(self, btn: Gtk.Button) -> None:
+        """Advance to next wizard page or trigger save on final page.
+
+        Args:
+            btn: Button emitting the clicked signal.
+        """
         if self.current_step < self.total_steps - 1:
             self.current_step += 1
             self._update_step_view()
@@ -945,11 +1141,148 @@ class FirstRunWizard(Gtk.Window):
             self._save_and_close()
 
     def _on_back_clicked(self, btn: Gtk.Button) -> None:
+        """Return to previous wizard page.
+
+        Args:
+            btn: Button emitting the clicked signal.
+        """
         if self.current_step > 0:
             self.current_step -= 1
             self._update_step_view()
 
+    def _record_wizard_sample(self, action: str, btn: Gtk.Button) -> None:
+        """Launch interactive sample recorder dialog in wizard."""
+        from ui.sample_recorder import SampleRecorderDialog
+        action_names = {
+            "START": self.i18n.t("voice_cmd_start"),
+            "SEND": self.i18n.t("voice_cmd_send"),
+            "PAUSE": self.i18n.t("voice_cmd_pause"),
+            "CANCEL": self.i18n.t("voice_cmd_cancel"),
+        }
+        name = action_names.get(action, action)
+        phrases = self.voice_commands.get_phrases_for_action(action)
+        first_phrase = phrases[0] if phrases else None
+
+        def _on_saved():
+            phs = self.voice_commands.get_phrases_for_action(action)
+            cnt = sum(len(p.samples) for p in phs)
+            if action in self.wizard_cmd_labels:
+                self.wizard_cmd_labels[action].set_label(f"{cnt} muestra(s)")
+
+        dialog = SampleRecorderDialog(
+            parent=self,
+            action=action,
+            action_display_name=name,
+            voice_commands=self.voice_commands,
+            aec_manager=self.aec,
+            phrase=first_phrase,
+            ui_language=self.selected_lang,
+            on_saved=_on_saved
+        )
+        dialog.show_all()
+
+    def _clear_wizard_sample(self, action: str) -> None:
+        """Clear templates for given action in wizard."""
+        self.voice_commands.clear_templates(action)
+        self.voice_commands.save_templates()
+        if action in self.wizard_cmd_labels:
+            self.wizard_cmd_labels[action].set_label("0 muestras")
+
+    def _on_wizard_calibrate_aec(self, btn: Gtk.Button) -> None:
+        """Run calibration in wizard."""
+        import threading
+        btn.set_sensitive(False)
+        self.calib_res_lbl.set_label(self.i18n.t("calibrating"))
+
+        def _worker():
+            calibrator = AcousticCalibrator()
+            res = calibrator.run_calibration()
+
+            def _done():
+                btn.set_sensitive(True)
+                self.calib_res_lbl.set_label(res.message)
+                return False
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_wizard_calibrate_noise(self, btn: Gtk.Button) -> None:
+        """Run 2-second ambient silence calibration in wizard."""
+        import threading, subprocess, time, socket, logging, numpy as np
+        from core.ipc import SOCKET_PATH
+        btn.set_sensitive(False)
+        self.wizard_noise_lbl.set_label("⏳ Calibrando silencio...")
+
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(SOCKET_PATH)
+            s.sendall(b"pause-voice-listener")
+            s.close()
+        except Exception:
+            pass
+
+        def _worker():
+            dev = self.aec.get_preferred_capture_device()
+            cmd = ["arecord", "-t", "raw", "-f", "S16_LE", "-c", "1", "-r", "16000"]
+            if dev and dev != "default":
+                cmd.extend(["-D", dev])
+
+            samples_list = []
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                t_end = time.time() + 2.0
+                while time.time() < t_end and proc and proc.stdout:
+                    chunk = proc.stdout.read(1024)
+                    if not chunk:
+                        break
+                    pcm = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+                    rms = float(np.sqrt(np.mean(pcm ** 2)))
+                    samples_list.append(rms)
+                proc.terminate()
+                proc.wait(timeout=1.0)
+            except Exception as e:
+                logging.error(f"Wizard noise calibration capture error: {e}")
+
+            try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(0.5)
+                s.connect(SOCKET_PATH)
+                s.sendall(b"resume-voice-listener")
+                s.close()
+            except Exception:
+                pass
+
+            def _done():
+                btn.set_sensitive(True)
+                if samples_list:
+                    mean_floor = float(np.mean(samples_list))
+                    std_floor = float(np.std(samples_list))
+                    max_floor = float(np.max(samples_list))
+
+                    opt_th = max(mean_floor * 2.2, max_floor + 2.5 * std_floor, 0.015)
+                    opt_th = round(opt_th, 3)
+                    mean_floor = round(mean_floor, 3)
+
+                    self.config["voice_vad_noise_floor"] = mean_floor
+                    self.config["voice_vad_threshold"] = opt_th
+                    self.voice_commands.config = self.config
+                    self.wizard_noise_lbl.set_label(f"✅ Piso: {mean_floor:.3f} | Umbral: {opt_th:.3f}")
+                else:
+                    self.wizard_noise_lbl.set_label("⚠️ Error de captura")
+                return False
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _on_install_opendeck_in_wizard(self, btn: Gtk.Button) -> None:
+        """Install Stream Deck / OpenDeck plugin from wizard interface.
+
+        Args:
+            btn: Install button widget.
+        """
         opendeck_plugins_dir = os.path.expanduser("~/.config/opendeck/plugins/")
         plugin_name = "com.kirulab.opendictate.sdplugin"
         target_dir = os.path.join(opendeck_plugins_dir, plugin_name)
@@ -976,6 +1309,7 @@ class FirstRunWizard(Gtk.Window):
             btn.set_label(f"Error: {e}")
 
     def _save_and_close(self) -> None:
+        """Persist all selected preferences, mark onboarding complete, and close window."""
         # Save Model
         if hasattr(self, 'model_combo'):
             selected_model = self.model_combo.get_active_id() or "small"
@@ -1010,7 +1344,15 @@ class FirstRunWizard(Gtk.Window):
             self.config["hide_bubble"] = True
             self.config["bubble_mode"] = "auto"
 
+        # Save Voice Commands
+        if hasattr(self, 'sw_voice'):
+            self.config["voice_commands_enabled"] = self.sw_voice.get_active()
+        self.voice_commands.save_templates()
+
         # Save AI Settings
+        if hasattr(self, 'stt_backend_combo'):
+            self.config["stt_backend"] = self.stt_backend_combo.get_active_id() or "local_whisper"
+
         if hasattr(self, 'ai_enable_switch'):
             is_ai_on = self.ai_enable_switch.get_active()
             self.config["ai_enabled"] = is_ai_on
@@ -1022,8 +1364,8 @@ class FirstRunWizard(Gtk.Window):
 
         if hasattr(self, 'ai_model_combo'):
             entry_child = self.ai_model_combo.get_child()
-            model_val = entry_child.get_text().strip() if entry_child else "gemma-4-26b-a4b-it"
-            self.config["model"] = model_val or "gemma-4-26b-a4b-it"
+            model_val = entry_child.get_text().strip() if entry_child else "gemini-3.1-flash-live-preview"
+            self.config["model"] = model_val or "gemini-3.1-flash-live-preview"
 
         # Save Preferences
         if hasattr(self, 'autostart_switch'):

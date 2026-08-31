@@ -14,13 +14,21 @@ from gi.repository import Gtk, Gdk, GLib
 import sqlite3
 import json
 import os
+import time
+import socket
+import logging
 import subprocess
 import re
 import shutil
-from typing import Dict, Any, Optional, Callable, Tuple, List
 from i18n import get_translator
-from core.config import ConfigManager
+from core.__version__ import __version__
+from core.config import ConfigManager, is_api_available
 from core.hardware import detect_desktop_environment, is_cuda_runtime_ready, get_cpu_core_count, get_supported_compute_types
+from core.updater import _parse_version, check_for_updates
+from core.voice_commands import VoiceCommandManager
+from core.aec import EchoCancelManager, AcousticCalibrator
+from ui.update_dialog import show_update_dialog
+
 
 
 SETTINGS_CSS = b"""
@@ -113,12 +121,67 @@ window.opendictate-settings {
 .badge-not-downloaded {
     color: #777777;
 }
+
+.update-banner-box {
+    background-color: rgba(53, 132, 228, 0.12);
+    border: 1px solid rgba(53, 132, 228, 0.35);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 6px 12px;
+}
+
+.update-banner-title {
+    font-size: 13px;
+    font-weight: bold;
+    color: #78aeed;
+}
+
+.update-banner-desc {
+    font-size: 11px;
+    color: #c0c0c0;
+}
+
+.btn-update-action {
+    background-color: #3584e4;
+    color: #ffffff;
+    font-weight: bold;
+    font-size: 12px;
+    border-radius: 6px;
+    padding: 4px 12px;
+}
+
+.btn-update-action:hover {
+    background-color: #1c71d8;
+}
+
+.update-status-ok {
+    color: #57e389;
+    font-size: 12px;
+}
 """
 
 
 
 class AppProfilesDialog(Gtk.Dialog):
-    def __init__(self, parent, config, db_path, i18n, auto_save_cb):
+    """Dialog for managing per-application LLM custom system prompts and vision toggle."""
+
+    def __init__(
+        self,
+        parent: Gtk.Window,
+        config: Dict[str, Any],
+        db_path: str,
+        i18n: Any,
+        auto_save_cb: Callable[[], None]
+    ) -> None:
+        """Initialize application profiles management modal dialog.
+
+        Args:
+            parent: Parent GTK window for modal transient positioning.
+            config: Application configuration dictionary.
+            db_path: Path to SQLite configuration database.
+            i18n: Translator instance for localized text strings.
+            auto_save_cb: Callback function to trigger parent save actions.
+        """
         super().__init__(title=i18n.t("tab_apps"), transient_for=parent, flags=0)
         self.config = config
         self.db_path = db_path
@@ -203,6 +266,7 @@ class AppProfilesDialog(Gtk.Dialog):
         self.load_profiles()
 
     def load_profiles(self) -> None:
+        """Query SQLite database and populate profile listbox rows."""
         for child in self.listbox.get_children():
             self.listbox.remove(child)
 
@@ -223,8 +287,13 @@ class AppProfilesDialog(Gtk.Dialog):
         except Exception as e:
             print("Error loading profiles:", e)
 
-
     def on_app_selected(self, listbox: Gtk.ListBox, row: Optional[Gtk.ListBoxRow]) -> None:
+        """Handle profile row selection to load custom prompt and vision settings.
+
+        Args:
+            listbox: Gtk.ListBox emitting signal.
+            row: Selected Gtk.ListBoxRow or None if unselected.
+        """
         if not row:
             self._updating_ui = True
             self.current_selected_app = None
@@ -254,8 +323,12 @@ class AppProfilesDialog(Gtk.Dialog):
             print("Error loading profile details:", e)
         self._updating_ui = False
 
-
     def get_open_apps(self) -> List[str]:
+        """Detect currently open application classes via pyatspi accessibility tree.
+
+        Returns:
+            List of unique application name strings formatted as 'Window [AppClass]'.
+        """
         apps = set()
         try:
             import pyatspi
@@ -277,8 +350,12 @@ class AppProfilesDialog(Gtk.Dialog):
             pass
         return sorted(list(apps))
 
-
     def on_add_app(self, btn: Gtk.Button) -> None:
+        """Present modal dialog to choose an active app or enter a custom window class.
+
+        Args:
+            btn: Button emitting the clicked signal.
+        """
         dialog = Gtk.MessageDialog(
             transient_for=self,
             flags=0,
@@ -319,8 +396,8 @@ class AppProfilesDialog(Gtk.Dialog):
             except Exception as e:
                 self.show_message(self.i18n.t("error", ""), str(e))
 
-
     def auto_save_profile(self, *args) -> None:
+        """Persist currently edited prompt and vision settings into SQLite."""
         if self._updating_ui or not self.current_selected_app:
             return
 
@@ -341,8 +418,12 @@ class AppProfilesDialog(Gtk.Dialog):
         except Exception as e:
             print("Auto-save profile error:", e)
 
-
     def delete_current_profile(self, btn: Gtk.Button) -> None:
+        """Delete currently selected profile from SQLite database.
+
+        Args:
+            btn: Button emitting the clicked signal.
+        """
         if not self.current_selected_app:
             return
 
@@ -357,9 +438,13 @@ class AppProfilesDialog(Gtk.Dialog):
         except Exception as e:
             self.show_message(self.i18n.t("error", ""), str(e))
 
-
-
     def show_message(self, title: str, message: str) -> None:
+        """Display an informational dialog message.
+
+        Args:
+            title: Dialog title.
+            message: Dialog body text.
+        """
         dialog = Gtk.MessageDialog(
             transient_for=self,
             flags=0,
@@ -381,6 +466,14 @@ class ConfigWindow(Gtk.Window):
         on_config_saved: Optional[Callable[[Optional[Dict[str, Any]]], None]] = None,
         daemon_ref: Optional[Any] = None
     ) -> None:
+        """Initialize GTK configuration and preferences window.
+
+        Args:
+            db_path: Absolute path to the SQLite application database.
+            config_path: Path to the JSON configuration file.
+            on_config_saved: Optional callback invoked when preferences are saved.
+            daemon_ref: Optional reference to active DictationDaemon instance.
+        """
         self.db_path = db_path
         self.config_path = config_path
         self.on_config_saved = on_config_saved
@@ -389,6 +482,9 @@ class ConfigWindow(Gtk.Window):
         self.config_manager = ConfigManager()
         self.config = self.load_config()
         self.i18n = get_translator(self.config.get("ui_language", "en"))
+        self.voice_commands = VoiceCommandManager(self.config)
+        self.aec = EchoCancelManager()
+        self.cmd_sample_labels: Dict[str, Gtk.Label] = {}
         
         self._updating_ui = False
 
@@ -402,6 +498,7 @@ class ConfigWindow(Gtk.Window):
         self._build_ui()
 
     def _build_ui(self) -> None:
+        """Construct sidebar list and tabbed settings pages in Gtk.Stack."""
         main_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         self.add(main_box)
 
@@ -479,6 +576,16 @@ class ConfigWindow(Gtk.Window):
         # Card 2: Dictation Behavior
         card_dict, list_dict = self._create_card(self.i18n.t("group_dictation_behavior"))
         
+        self.stt_backend_combo = Gtk.ComboBoxText()
+        self.stt_backend_combo.append("local_whisper", self.i18n.t("stt_backend_local"))
+        self.stt_backend_combo.append("gemini_live", self.i18n.t("stt_backend_gemini_live"))
+        curr_backend = self.config.get("stt_backend", "local_whisper")
+        if curr_backend == "gemini_live" and not is_api_available(self.config):
+            curr_backend = "local_whisper"
+        self.stt_backend_combo.set_active_id(curr_backend)
+        self.stt_backend_combo.connect("changed", self._on_stt_backend_changed)
+        list_dict.add(self._create_control_row(self.i18n.t("lbl_stt_backend"), self.stt_backend_combo, self.i18n.t("lbl_stt_backend_desc")))
+
         self.auto_send_switch = Gtk.Switch()
         self.auto_send_switch.set_active(self.config.get("auto_send", False))
         self.auto_send_switch.connect("notify::active", self.auto_save)
@@ -513,12 +620,32 @@ class ConfigWindow(Gtk.Window):
         general_box.pack_start(card_dict, False, False, 0)
 
         # Card 3: Updates
-        card_updates, list_updates = self._create_card(self.i18n.t("group_updates"))
+        card_updates, self.list_updates = self._create_card(self.i18n.t("group_updates"))
+
+        # Installed version row
+        ver_lbl = Gtk.Label(label=f"v{__version__}", xalign=1)
+        ver_lbl.get_style_context().add_class("row-title")
+        self.list_updates.add(self._create_control_row(self.i18n.t("update_lbl_current_version"), ver_lbl))
+
+        # Dynamic Update Status / Banner container
+        self.update_banner_row = Gtk.ListBoxRow()
+        self.update_banner_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        self.update_banner_row.add(self.update_banner_box)
+        self.list_updates.add(self.update_banner_row)
+        self._render_update_banner()
 
         self.check_updates_switch = Gtk.Switch()
         self.check_updates_switch.set_active(self.config.get("check_updates", False))
         self.check_updates_switch.connect("notify::active", self._on_check_updates_changed)
-        list_updates.add(self._create_switch_row(self.i18n.t("lbl_check_updates"), self.check_updates_switch))
+        self.list_updates.add(self._create_switch_row(self.i18n.t("lbl_check_updates"), self.check_updates_switch))
+
+        self.update_channel_combo = Gtk.ComboBoxText()
+        self.update_channel_combo.append("stable", self.i18n.t("channel_stable"))
+        self.update_channel_combo.append("nightly", self.i18n.t("channel_nightly"))
+        self.update_channel_combo.set_active_id(self.config.get("update_channel", "stable"))
+        self.update_channel_combo.set_sensitive(self.check_updates_switch.get_active())
+        self.update_channel_combo.connect("changed", self.auto_save)
+        self.list_updates.add(self._create_control_row(self.i18n.t("lbl_update_channel"), self.update_channel_combo))
 
         self.update_freq_combo = Gtk.ComboBoxText()
         self.update_freq_combo.append("daily", self.i18n.t("freq_daily"))
@@ -527,22 +654,29 @@ class ConfigWindow(Gtk.Window):
         self.update_freq_combo.set_active_id(self.config.get("update_frequency", "monthly"))
         self.update_freq_combo.set_sensitive(self.check_updates_switch.get_active())
         self.update_freq_combo.connect("changed", self.auto_save)
-        list_updates.add(self._create_control_row(self.i18n.t("lbl_update_frequency"), self.update_freq_combo))
+        self.list_updates.add(self._create_control_row(self.i18n.t("lbl_update_frequency"), self.update_freq_combo))
 
-        # Manual check button
+        # Manual check button with spinner and status feedback
         check_btn_row = Gtk.ListBoxRow()
         check_btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         check_btn_box.set_margin_start(16)
         check_btn_box.set_margin_end(16)
-        check_btn_box.set_margin_top(12)
+        check_btn_box.set_margin_top(10)
         check_btn_box.set_margin_bottom(12)
-        
+
         self.manual_check_btn = Gtk.Button(label=self.i18n.t("btn_check_updates_now"))
         self.manual_check_btn.connect("clicked", self._on_manual_check_updates)
-        check_btn_box.pack_start(self.manual_check_btn, True, True, 0)
-        
+        check_btn_box.pack_start(self.manual_check_btn, False, False, 0)
+
+        self.update_spinner = Gtk.Spinner()
+        check_btn_box.pack_start(self.update_spinner, False, False, 0)
+
+        self.update_manual_status_lbl = Gtk.Label(label="", xalign=0)
+        self.update_manual_status_lbl.get_style_context().add_class("row-subtitle")
+        check_btn_box.pack_start(self.update_manual_status_lbl, True, True, 0)
+
         check_btn_row.add(check_btn_box)
-        list_updates.add(check_btn_row)
+        self.list_updates.add(check_btn_row)
 
         general_box.pack_start(card_updates, False, False, 0)
 
@@ -563,16 +697,31 @@ class ConfigWindow(Gtk.Window):
         self.api_key_entry.set_text(self.config.get("api_key", ""))
         self.api_key_entry.set_visibility(False)
         self.api_key_entry.set_width_chars(28)
+        self.api_key_entry.connect("changed", self._on_api_key_changed)
         self.api_key_entry.connect("focus-out-event", self.auto_save)
         list_api.add(self._create_control_row(self.i18n.t("lbl_api_key"), self.api_key_entry))
 
-        self.model_entry = Gtk.Entry()
-        self.model_entry.set_text(self.config.get("model", "gemma-4-26b-a4b-it"))
-        self.model_entry.set_width_chars(28)
-        self.model_entry.connect("focus-out-event", self.auto_save)
-        list_api.add(self._create_control_row(self.i18n.t("lbl_model"), self.model_entry))
+        self.model_combo = Gtk.ComboBoxText.new_with_entry()
+        self.model_combo.append_text("gemini-3.1-flash-live-preview")
+        self.model_combo.append_text("gemma-4-26b-a4b-it")
+        current_model = self.config.get("model", "gemini-3.1-flash-live-preview")
+        self.model_combo.get_child().set_text(current_model)
+        self.model_combo.connect("changed", self.auto_save)
+        list_api.add(self._create_control_row(self.i18n.t("lbl_model"), self.model_combo, self.i18n.t("lbl_model_desc")))
 
         ai_box.pack_start(card_api, False, False, 0)
+
+        # Card: Live Speech-to-Text Settings
+        card_live_stt, list_live_stt = self._create_card(self.i18n.t("group_gemini_live_stt"))
+
+        self.gemini_live_mode_combo = Gtk.ComboBoxText()
+        self.gemini_live_mode_combo.append("SMART", self.i18n.t("gemini_live_mode_smart"))
+        self.gemini_live_mode_combo.append("VERBATIM", self.i18n.t("gemini_live_mode_verbatim"))
+        self.gemini_live_mode_combo.set_active_id(self.config.get("gemini_live_mode", "SMART"))
+        self.gemini_live_mode_combo.connect("changed", self.auto_save)
+        list_live_stt.add(self._create_control_row(self.i18n.t("lbl_gemini_live_mode"), self.gemini_live_mode_combo, self.i18n.t("lbl_gemini_live_mode_desc")))
+
+        ai_box.pack_start(card_live_stt, False, False, 0)
 
         # Card: LLM Parameters
         card_llm, list_llm = self._create_card(self.i18n.t("group_llm_parameters"))
@@ -591,10 +740,20 @@ class ConfigWindow(Gtk.Window):
 
         self.llm_thinking_switch = Gtk.Switch()
         self.llm_thinking_switch.set_active(self.config.get("llm_thinking", False))
-        self.llm_thinking_switch.connect("notify::active", self.auto_save)
+        self.llm_thinking_switch.connect("notify::active", self._on_llm_thinking_toggled)
         list_llm.add(self._create_switch_row(self.i18n.t("lbl_llm_thinking"), self.llm_thinking_switch))
 
+        self.llm_thinking_level_combo = Gtk.ComboBoxText()
+        self.llm_thinking_level_combo.append("minimal", self.i18n.t("thinking_level_minimal"))
+        self.llm_thinking_level_combo.append("low", self.i18n.t("thinking_level_low"))
+        self.llm_thinking_level_combo.append("medium", self.i18n.t("thinking_level_medium"))
+        self.llm_thinking_level_combo.append("high", self.i18n.t("thinking_level_high"))
+        self.llm_thinking_level_combo.set_active_id(self.config.get("llm_thinking_level", "minimal"))
+        self.llm_thinking_level_combo.connect("changed", self.auto_save)
+        list_llm.add(self._create_control_row(self.i18n.t("lbl_llm_thinking_level"), self.llm_thinking_level_combo))
+
         ai_box.pack_start(card_llm, False, False, 0)
+        self._update_api_dependent_sensitivity()
 
         # Card: Base System Prompt
         card_prompt, list_prompt = self._create_card(self.i18n.t("group_system_prompt"))
@@ -944,12 +1103,116 @@ class ConfigWindow(Gtk.Window):
         list_guide.add(self._create_guide_row(self.i18n.t("guide_kde_title"), self.i18n.t("guide_kde_desc")))
         shortcuts_box.pack_start(card_guide, False, False, 0)
 
+        # ---------------------------------------------------------
+        # Tab 7: Voice Commands & Audio
+        # ---------------------------------------------------------
+        voice_scroll = Gtk.ScrolledWindow()
+        voice_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        voice_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        voice_box.get_style_context().add_class("page-container")
+        voice_scroll.add(voice_box)
+        self.stack.add_titled(voice_scroll, "voice", self.i18n.t("tab_voice_commands"))
+
+        # Card 1: Voice Commands & Wake Word
+        card_voice, list_voice = self._create_card(self.i18n.t("group_voice_commands"))
+
+        self.voice_enable_switch = Gtk.Switch()
+        self.voice_enable_switch.set_active(self.config.get("voice_commands_enabled", False))
+        self.voice_enable_switch.connect("notify::active", self._on_voice_enable_toggled)
+        list_voice.add(self._create_switch_row(self.i18n.t("lbl_voice_commands_enabled"), self.voice_enable_switch))
+
+        self.voice_thresh_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.50, 0.90, 0.01)
+        self.voice_thresh_scale.set_value(float(self.config.get("voice_command_threshold", 0.70)))
+        self.voice_thresh_scale.set_digits(2)
+        self.voice_thresh_scale.set_size_request(240, -1)
+        self.voice_thresh_scale.connect("value-changed", self._on_voice_thresh_changed)
+        list_voice.add(self._create_control_row(self.i18n.t("lbl_voice_command_threshold"), self.voice_thresh_scale))
+
+        self.voice_pause_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.2, 6.0, 0.1)
+        self.voice_pause_scale.set_value(float(self.config.get("voice_command_silence_pause", 1.5)))
+        self.voice_pause_scale.set_digits(1)
+        self.voice_pause_scale.set_size_request(240, -1)
+        self.voice_pause_scale.connect("value-changed", self._on_voice_pause_changed)
+        list_voice.add(self._create_control_row(self.i18n.t("lbl_voice_command_silence_pause"), self.voice_pause_scale))
+
+        # Dynamic VAD Speech Energy Threshold & Noise Floor Calibration
+        self.vad_thresh_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.010, 0.200, 0.005)
+        self.vad_thresh_scale.set_value(float(self.config.get("voice_vad_threshold", 0.075)))
+        self.vad_thresh_scale.set_digits(3)
+        self.vad_thresh_scale.set_size_request(240, -1)
+        self.vad_thresh_scale.connect("value-changed", self._on_vad_thresh_changed)
+        list_voice.add(self._create_control_row(self.i18n.t("lbl_voice_vad_threshold"), self.vad_thresh_scale))
+
+        self.vad_calib_lbl = Gtk.Label(
+            label=f"Piso: {self.config.get('voice_vad_noise_floor', 0.030):.3f} | Umbral: {self.config.get('voice_vad_threshold', 0.075):.3f}",
+            xalign=0
+        )
+        self.vad_calib_lbl.get_style_context().add_class("dim-label")
+
+        btn_calib_noise = Gtk.Button(label=self.i18n.t("btn_calibrate_noise"))
+        btn_calib_noise.get_style_context().add_class("btn-secondary")
+        btn_calib_noise.connect("clicked", lambda b: self._run_vad_noise_calibration(b, self.vad_calib_lbl))
+
+        noise_row = Gtk.ListBoxRow()
+        noise_row.get_style_context().add_class("preference-row")
+        n_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        n_box.set_margin_top(6)
+        n_box.set_margin_bottom(6)
+        n_box.set_margin_left(8)
+        n_box.set_margin_right(8)
+        n_box.pack_start(self.vad_calib_lbl, True, True, 0)
+        n_box.pack_end(btn_calib_noise, False, False, 0)
+        noise_row.add(n_box)
+        list_voice.add(noise_row)
+
+        voice_box.pack_start(card_voice, False, False, 0)
+
+        # Card 2: Enrolled Command Actions & Multi-Phrase Triggers
+        card_actions, list_actions = self._create_card(self.i18n.t("tab_voice_commands"))
+        self.list_voice_actions = list_actions
+        self._rebuild_voice_actions()
+        voice_box.pack_start(card_actions, False, False, 0)
+
+        # Card 3: Acoustic Echo Cancellation & Microphone Health
+        card_aec, list_aec = self._create_card(self.i18n.t("group_aec_calibration"))
+
+        dev_name = self.aec.get_preferred_capture_device()
+        dev_label = Gtk.Label(label=dev_name, xalign=1)
+        dev_label.get_style_context().add_class("dim-label")
+        list_aec.add(self._create_control_row(self.i18n.t("lbl_aec_device"), dev_label))
+
+        self.calib_result_lbl = Gtk.Label(label="--", xalign=0)
+        self.calib_result_lbl.get_style_context().add_class("dim-label")
+
+        calib_btn = Gtk.Button(label=self.i18n.t("btn_calibrate_aec"))
+        calib_btn.get_style_context().add_class("btn-secondary")
+        calib_btn.connect("clicked", lambda b: self._run_aec_calibration(b, self.calib_result_lbl))
+
+        calib_row = Gtk.ListBoxRow()
+        calib_row.get_style_context().add_class("preference-row")
+        c_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        c_box.set_margin_top(6)
+        c_box.set_margin_bottom(6)
+        c_box.set_margin_left(8)
+        c_box.set_margin_right(8)
+        c_box.pack_start(self.calib_result_lbl, True, True, 0)
+        c_box.pack_end(calib_btn, False, False, 0)
+        calib_row.add(c_box)
+        list_aec.add(calib_row)
+
+        voice_box.pack_start(card_aec, False, False, 0)
+
         self._refresh_integrations_status()
 
         self.show_all()
 
 
-    def on_manage_apps_clicked(self, widget):
+    def on_manage_apps_clicked(self, widget: Gtk.Widget) -> None:
+        """Open the per-application system prompts management modal.
+
+        Args:
+            widget: Widget triggering dialog opening.
+        """
         dialog = AppProfilesDialog(self, self.config, self.db_path, self.i18n, self.auto_save)
         dialog.run()
         dialog.destroy()
@@ -965,7 +1228,14 @@ class ConfigWindow(Gtk.Window):
             )
 
     def _create_card(self, title: str) -> Tuple[Gtk.Box, Gtk.ListBox]:
-        """Create structured card frame with optional header."""
+        """Create structured card frame with optional header.
+
+        Args:
+            title: Section title text.
+
+        Returns:
+            Tuple of (outer Gtk.Box, inner Gtk.ListBox).
+        """
         container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         if title:
             escaped_title = GLib.markup_escape_text(title.upper())
@@ -986,7 +1256,16 @@ class ConfigWindow(Gtk.Window):
         return container, listbox
 
     def _create_switch_row(self, title: str, switch: Gtk.Switch, subtitle: Optional[str] = None) -> Gtk.ListBoxRow:
-        """Create standard preference row containing left-aligned label and right-aligned switch."""
+        """Create standard preference row containing left-aligned label and right-aligned switch.
+
+        Args:
+            title: Primary title label text.
+            switch: Gtk.Switch widget.
+            subtitle: Optional subtitle explanation text.
+
+        Returns:
+            Configured Gtk.ListBoxRow widget.
+        """
         row = Gtk.ListBoxRow()
         row.get_style_context().add_class("preference-row")
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -1012,7 +1291,16 @@ class ConfigWindow(Gtk.Window):
         return row
 
     def _create_control_row(self, title: str, control: Gtk.Widget, subtitle: Optional[str] = None) -> Gtk.ListBoxRow:
-        """Create standard preference row containing left-aligned label and right-aligned control widget."""
+        """Create standard preference row containing left-aligned label and right-aligned control widget.
+
+        Args:
+            title: Primary title label text.
+            control: Custom Gtk.Widget control (e.g. ComboBox, SpinButton, Button).
+            subtitle: Optional subtitle explanation text.
+
+        Returns:
+            Configured Gtk.ListBoxRow widget.
+        """
         row = Gtk.ListBoxRow()
         row.get_style_context().add_class("preference-row")
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -1031,6 +1319,10 @@ class ConfigWindow(Gtk.Window):
             vbox.pack_start(sub_lbl, False, False, 0)
 
         hbox.pack_start(vbox, True, True, 0)
+        if isinstance(control, Gtk.Scale):
+            curr_w, curr_h = control.get_size_request()
+            if curr_w < 200:
+                control.set_size_request(240, -1)
         control.set_valign(Gtk.Align.CENTER)
         control.set_halign(Gtk.Align.END)
         hbox.pack_end(control, False, False, 0)
@@ -1038,19 +1330,31 @@ class ConfigWindow(Gtk.Window):
         return row
 
     def _on_realtime_switch_changed(self, switch: Gtk.Switch, *args) -> None:
-        """Update sensitivity of chunking parameters and trigger auto-save."""
+        """Update sensitivity of chunking parameters and trigger auto-save.
+
+        Args:
+            switch: Realtime toggle switch.
+        """
         if hasattr(self, 'chunk_options_box'):
             self.chunk_options_box.set_sensitive(switch.get_active())
         self.auto_save()
 
     def _on_vad_switch_changed(self, switch: Gtk.Switch, *args) -> None:
-        """Update sensitivity of expert VAD parameters card and trigger auto-save."""
+        """Update sensitivity of expert VAD parameters card and trigger auto-save.
+
+        Args:
+            switch: VAD filter toggle switch.
+        """
         if hasattr(self, 'card_vad_expert'):
             self.card_vad_expert.set_sensitive(switch.get_active())
         self.auto_save()
 
     def _populate_compute_types(self, device: str) -> None:
-        """Populate compute type combo options based on target device support."""
+        """Populate compute type combo options based on target device support.
+
+        Args:
+            device: Compute device string ('cpu', 'cuda', or 'auto').
+        """
         if not hasattr(self, 'compute_combo'):
             return
         active_id = self.compute_combo.get_active_id() or self.config.get("whisper_compute_type", "default")
@@ -1064,16 +1368,30 @@ class ConfigWindow(Gtk.Window):
             self.compute_combo.set_active_id("default")
 
     def _on_expert_device_changed(self, combo: Gtk.ComboBoxText) -> None:
-        """Handle execution device change and refresh supported compute types."""
+        """Handle execution device change and refresh supported compute types.
+
+        Args:
+            combo: Device selection combo box.
+        """
         dev = combo.get_active_id() or "auto"
         self._populate_compute_types(dev)
         self.auto_save()
 
     def on_delete_event(self, widget: Gtk.Widget, event: Any) -> bool:
+        """Intercept close button to hide window instead of destroying.
+
+        Args:
+            widget: Window widget emitting signal.
+            event: Event object.
+
+        Returns:
+            Always returns True to prevent window destruction.
+        """
         self.hide()
         return True
 
     def refresh_models_list(self) -> None:
+        """Scan HuggingFace cache and rebuild list of downloaded Whisper models."""
         for child in self.models_listbox.get_children():
             self.models_listbox.remove(child)
 
@@ -1135,6 +1453,13 @@ class ConfigWindow(Gtk.Window):
         self.models_listbox.show_all()
 
     def on_delete_model_clicked(self, widget: Gtk.Button, model_name: str, hf_path: str) -> None:
+        """Prompt confirmation dialog and remove cached model directory from disk.
+
+        Args:
+            widget: Delete button.
+            model_name: Model size identifier.
+            hf_path: HuggingFace model cache directory path.
+        """
         dialog = Gtk.MessageDialog(
             transient_for=self,
             flags=0,
@@ -1155,11 +1480,22 @@ class ConfigWindow(Gtk.Window):
                 self.show_message(self.i18n.t("error", ""), str(e))
 
     def on_activate_model_clicked(self, widget: Gtk.Widget, model_name: str) -> None:
+        """Set specified model as active and persist configuration.
+
+        Args:
+            widget: Activate button widget.
+            model_name: Model size identifier to activate.
+        """
         self.config["whisper_model_size"] = model_name
         self.auto_save()
         self.refresh_models_list()
 
     def on_indicator_mode_changed(self, combo: Gtk.ComboBoxText) -> None:
+        """Handle system indicator preference selection (GNOME extension vs AppIndicator).
+
+        Args:
+            combo: Indicator mode combo box widget.
+        """
         if self._updating_ui:
             return
         mode = combo.get_active_id() or "auto"
@@ -1197,6 +1533,11 @@ class ConfigWindow(Gtk.Window):
         self.auto_save()
 
     def on_launch_wizard_clicked(self, widget: Gtk.Button) -> None:
+        """Launch first-run onboarding wizard.
+
+        Args:
+            widget: Wizard launcher button.
+        """
         try:
             from ui.wizard import FirstRunWizard
             from core.config import ConfigManager
@@ -1210,6 +1551,11 @@ class ConfigWindow(Gtk.Window):
             self.show_message(self.i18n.t("error", ""), str(e))
 
     def load_config(self) -> Dict[str, Any]:
+        """Load configuration dictionary from daemon reference or local config file.
+
+        Returns:
+            Dictionary with current settings.
+        """
         if self.daemon_ref and hasattr(self.daemon_ref, 'config'):
             return self.daemon_ref.config.copy()
         if hasattr(self, 'config_manager'):
@@ -1217,6 +1563,11 @@ class ConfigWindow(Gtk.Window):
         return {}
 
     def update_ui_from_config(self, new_config: Dict[str, Any]) -> None:
+        """Populate and synchronize all GTK UI widgets from a new configuration dictionary.
+
+        Args:
+            new_config: Configuration dictionary.
+        """
         self._updating_ui = True
         self.config = new_config
 
@@ -1233,12 +1584,22 @@ class ConfigWindow(Gtk.Window):
             self.restore_focus_switch.set_active(self.config.get("restore_window_focus", False))
         if hasattr(self, 'check_updates_switch'):
             self.check_updates_switch.set_active(self.config.get("check_updates", False))
+        if hasattr(self, 'update_channel_combo'):
+            self.update_channel_combo.set_active_id(self.config.get("update_channel", "stable"))
+            self.update_channel_combo.set_sensitive(self.config.get("check_updates", False))
         if hasattr(self, 'update_freq_combo'):
             self.update_freq_combo.set_active_id(self.config.get("update_frequency", "monthly"))
             self.update_freq_combo.set_sensitive(self.config.get("check_updates", False))
 
         self.api_key_entry.set_text(self.config.get("api_key", ""))
-        self.model_entry.set_text(self.config.get("model", "gemma-4-26b-a4b-it"))
+        if hasattr(self, 'model_combo'):
+            self.model_combo.set_active_id(self.config.get("model", "gemma-4-26b-a4b-it"))
+        if hasattr(self, 'stt_backend_combo'):
+            self.stt_backend_combo.set_active_id(self.config.get("stt_backend", "local_whisper"))
+        if hasattr(self, 'gemini_live_mode_combo'):
+            self.gemini_live_mode_combo.set_active_id(self.config.get("gemini_live_mode", "smart"))
+        if hasattr(self, 'llm_thinking_level_combo'):
+            self.llm_thinking_level_combo.set_active_id(self.config.get("llm_thinking_level", "low"))
 
         if hasattr(self, 'llm_timeout_spin'):
             self.llm_timeout_spin.set_value(self.config.get("llm_timeout", 120))
@@ -1289,9 +1650,15 @@ class ConfigWindow(Gtk.Window):
             self.indicator_combo.set_active_id(self.config.get("indicator_mode", "auto"))
 
         self._refresh_integrations_status()
+        self._update_api_dependent_sensitivity()
         self._updating_ui = False
 
     def on_ui_language_changed(self, combo: Gtk.ComboBoxText, *args) -> None:
+        """Handle UI language change, reload translation dictionary, and rebuild settings interface.
+
+        Args:
+            combo: ComboBoxText widget emitting signal.
+        """
         if self._updating_ui:
             return
         new_lang = combo.get_active_id() or "en"
@@ -1315,6 +1682,7 @@ class ConfigWindow(Gtk.Window):
         self._rebuild_ui()
 
     def _rebuild_ui(self) -> None:
+        """Reconstruct entire window layout following locale changes while preserving active tab."""
         active_tab = "general"
         if hasattr(self, 'stack') and self.stack:
             active_tab = self.stack.get_visible_child_name() or "general"
@@ -1329,6 +1697,7 @@ class ConfigWindow(Gtk.Window):
         self.show_all()
 
     def _notify_daemon_reload(self) -> None:
+        """Send reload-config IPC command to running daemon socket if reachable."""
         try:
             from core.ipc import SOCKET_PATH
             import socket
@@ -1355,31 +1724,174 @@ class ConfigWindow(Gtk.Window):
         except Exception as e:
             logging.debug(f"Could not sync state file directly: {e}")
 
-    def _on_hide_bubble_changed(self, switch, gparam):
+    def _on_hide_bubble_changed(self, switch: Gtk.Switch, gparam: Any) -> None:
+        """Handle bubble hide switch state change and update bubble mode combo sensitivity.
+
+        Args:
+            switch: Switch widget emitting signal.
+            gparam: GObject property parameter specification.
+        """
         self.bubble_mode_combo.set_sensitive(not switch.get_active())
         self.auto_save()
 
-    def _on_check_updates_changed(self, switch, gparam):
-        self.update_freq_combo.set_sensitive(switch.get_active())
+    def _on_check_updates_changed(self, switch: Gtk.Switch, gparam: Any) -> None:
+        """Handle auto-updates check switch state change and toggle frequency combo sensitivity.
+
+        Args:
+            switch: Switch widget emitting signal.
+            gparam: GObject property parameter specification.
+        """
+        if hasattr(self, 'update_channel_combo'):
+            self.update_channel_combo.set_sensitive(switch.get_active())
+        if hasattr(self, 'update_freq_combo'):
+            self.update_freq_combo.set_sensitive(switch.get_active())
         self.auto_save()
 
-    def _on_manual_check_updates(self, btn):
-        from core.updater import check_for_updates
-        window = self.get_window()
-        if window:
-            window.set_cursor(Gdk.Cursor.new_from_name(window.get_display(), "wait"))
-        
-        def _reset_cursor():
-            if window:
-                window.set_cursor(None)
-                
-        check_for_updates(self.config, self.config_manager, force=True)
-        GLib.timeout_add(2000, _reset_cursor)
+    def _render_update_banner(self) -> None:
+        """Render dynamic update notification banner based on SQLite config state."""
+        if not hasattr(self, 'update_banner_box'):
+            return
+
+        for child in self.update_banner_box.get_children():
+            self.update_banner_box.remove(child)
+
+        avail_ver = self.config.get("available_update_version", "")
+        if avail_ver and _parse_version(avail_ver) > _parse_version(__version__):
+            banner_frame = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+            banner_frame.get_style_context().add_class("update-banner-box")
+
+            icon = Gtk.Image.new_from_icon_name("software-update-available", Gtk.IconSize.LARGE_TOOLBAR)
+            banner_frame.pack_start(icon, False, False, 0)
+
+            vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            t_lbl = Gtk.Label(label=self.i18n.t("update_banner_title", version=f"v{avail_ver}"), xalign=0)
+            t_lbl.get_style_context().add_class("update-banner-title")
+            d_lbl = Gtk.Label(label=self.i18n.t("update_banner_desc"), xalign=0)
+            d_lbl.get_style_context().add_class("update-banner-desc")
+            vbox.pack_start(t_lbl, False, False, 0)
+            vbox.pack_start(d_lbl, False, False, 0)
+            banner_frame.pack_start(vbox, True, True, 0)
+
+            view_btn = Gtk.Button(label=self.i18n.t("update_btn_view_details"))
+            view_btn.get_style_context().add_class("btn-update-action")
+            view_btn.set_valign(Gtk.Align.CENTER)
+            view_btn.connect("clicked", self._open_update_dialog_from_banner)
+            banner_frame.pack_end(view_btn, False, False, 0)
+
+            self.update_banner_box.pack_start(banner_frame, True, True, 0)
+            self.update_banner_row.show_all()
+        else:
+            status_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            status_box.set_margin_start(16)
+            status_box.set_margin_end(16)
+            status_box.set_margin_top(6)
+            status_box.set_margin_bottom(6)
+
+            ok_icon = Gtk.Image.new_from_icon_name("emblem-ok-symbolic", Gtk.IconSize.MENU)
+            status_box.pack_start(ok_icon, False, False, 0)
+
+            ok_lbl = Gtk.Label(label=self.i18n.t("update_lbl_latest_installed", version=f"v{__version__}"), xalign=0)
+            ok_lbl.get_style_context().add_class("update-status-ok")
+            status_box.pack_start(ok_lbl, True, True, 0)
+
+            self.update_banner_box.pack_start(status_box, True, True, 0)
+            self.update_banner_row.show_all()
+
+    def _open_update_dialog_from_banner(self, btn: Gtk.Button) -> None:
+        """Open update dialog using stored SQLite release details."""
+        update_info = {
+            "version": self.config.get("available_update_version", ""),
+            "url": self.config.get("available_update_url", ""),
+            "notes": self.config.get("available_update_notes", "")
+        }
+        show_update_dialog(self.config, self.config_manager, update_info)
+
+    def _on_manual_check_updates(self, btn: Gtk.Button) -> None:
+        """Execute explicit manual update check in background with responsive UI feedback."""
+        self.manual_check_btn.set_sensitive(False)
+        self.update_spinner.start()
+        self.update_manual_status_lbl.set_text(self.i18n.t("update_status_checking"))
+
+        def _on_found(update_info: Dict[str, Any]) -> None:
+            self._render_update_banner()
+            self._reset_manual_check_ui()
+            show_update_dialog(self.config, self.config_manager, update_info)
+
+        def _on_latest() -> None:
+            self._render_update_banner()
+            self._reset_manual_check_ui(self.i18n.t("update_notification_latest"))
+
+        def _on_error(err_str: str) -> None:
+            self._reset_manual_check_ui(self.i18n.t("update_notification_error"))
+
+        check_for_updates(
+            self.config,
+            self.config_manager,
+            force=True,
+            on_update_found=_on_found,
+            on_up_to_date=_on_latest,
+            on_error=_on_error
+        )
+
+    def _reset_manual_check_ui(self, status_msg: Optional[str] = None) -> None:
+        """Reset manual check button and spinner state."""
+        self.manual_check_btn.set_sensitive(True)
+        self.update_spinner.stop()
+        if status_msg:
+            self.update_manual_status_lbl.set_text(status_msg)
+            GLib.timeout_add(5000, lambda: self.update_manual_status_lbl.set_text(""))
+        else:
+            self.update_manual_status_lbl.set_text("")
+
+    def _on_api_key_changed(self, entry: Gtk.Entry) -> None:
+        """Handle API key edits and dynamically update cloud controls sensitivity."""
+        self._update_api_dependent_sensitivity()
+        self.auto_save()
+
+    def _on_stt_backend_changed(self, combo: Gtk.ComboBoxText) -> None:
+        """Prevent selecting cloud STT if no API key is provided."""
+        has_key = bool(self.api_key_entry.get_text().strip()) if hasattr(self, 'api_key_entry') else False
+        if combo.get_active_id() == "gemini_live" and not has_key:
+            combo.set_active_id("local_whisper")
+        self.auto_save()
+
+    def _on_llm_thinking_toggled(self, switch: Gtk.Switch, gparam: Any) -> None:
+        """Toggle thinking level sensitivity based on thinking switch."""
+        if hasattr(self, 'llm_thinking_level_combo'):
+            has_key = bool(self.api_key_entry.get_text().strip()) if hasattr(self, 'api_key_entry') else False
+            self.llm_thinking_level_combo.set_sensitive(has_key and switch.get_active())
+        self.auto_save()
+
+    def _update_api_dependent_sensitivity(self) -> None:
+        """Dynamically enable or disable cloud/API features based on API key presence."""
+        has_key = bool(self.api_key_entry.get_text().strip()) if hasattr(self, 'api_key_entry') else False
+        if hasattr(self, 'stt_backend_combo'):
+            if not has_key and self.stt_backend_combo.get_active_id() == "gemini_live":
+                self.stt_backend_combo.set_active_id("local_whisper")
+        if hasattr(self, 'ai_enabled_switch'):
+            self.ai_enabled_switch.set_sensitive(has_key)
+            if not has_key and self.ai_enabled_switch.get_active():
+                self.ai_enabled_switch.set_active(False)
+        if hasattr(self, 'model_combo'):
+            self.model_combo.set_sensitive(has_key)
+        if hasattr(self, 'gemini_live_mode_combo'):
+            self.gemini_live_mode_combo.set_sensitive(has_key)
+        if hasattr(self, 'llm_timeout_spin'):
+            self.llm_timeout_spin.set_sensitive(has_key)
+        if hasattr(self, 'llm_temp_scale'):
+            self.llm_temp_scale.set_sensitive(has_key)
+        if hasattr(self, 'llm_thinking_switch'):
+            self.llm_thinking_switch.set_sensitive(has_key)
+        if hasattr(self, 'llm_thinking_level_combo'):
+            self.llm_thinking_level_combo.set_sensitive(has_key and self.llm_thinking_switch.get_active())
 
     def auto_save(self, *args) -> None:
+        """Read all UI widget values and persist updated configuration."""
         if self._updating_ui:
             return
 
+        if hasattr(self, 'stt_backend_combo'):
+            self.config["stt_backend"] = self.stt_backend_combo.get_active_id() or "local_whisper"
         self.config["auto_send"] = self.auto_send_switch.get_active()
         self.config["ai_enabled"] = self.ai_enabled_switch.get_active()
         self.config["hide_bubble"] = self.hide_bubble_switch.get_active()
@@ -1388,6 +1900,8 @@ class ConfigWindow(Gtk.Window):
             self.config["bubble_mode"] = self.bubble_mode_combo.get_active_id() or "auto"
         if hasattr(self, 'check_updates_switch'):
             self.config["check_updates"] = self.check_updates_switch.get_active()
+        if hasattr(self, 'update_channel_combo'):
+            self.config["update_channel"] = self.update_channel_combo.get_active_id() or "stable"
         if hasattr(self, 'update_freq_combo'):
             self.config["update_frequency"] = self.update_freq_combo.get_active_id() or "monthly"
         if hasattr(self, 'indicator_combo'):
@@ -1423,12 +1937,20 @@ Icon=audio-input-microphone
                 os.remove(autostart_path)
 
         # Save Model / AI Settings
-        self.config["api_key"] = self.api_key_entry.get_text().strip()
-        self.config["model"] = self.model_entry.get_text().strip()
+        if hasattr(self, 'api_key_entry'):
+            self.config["api_key"] = self.api_key_entry.get_text().strip()
+        if hasattr(self, 'model_combo'):
+            entry = self.model_combo.get_child()
+            model_val = entry.get_text().strip() if entry else "gemini-3.1-flash-live-preview"
+            self.config["model"] = model_val or "gemini-3.1-flash-live-preview"
+        if hasattr(self, 'gemini_live_mode_combo'):
+            self.config["gemini_live_mode"] = self.gemini_live_mode_combo.get_active_id() or "SMART"
         if hasattr(self, 'llm_timeout_spin'):
             self.config["llm_timeout"] = int(self.llm_timeout_spin.get_value())
             self.config["llm_temperature"] = float(self.llm_temp_scale.get_value())
             self.config["llm_thinking"] = self.llm_thinking_switch.get_active()
+        if hasattr(self, 'llm_thinking_level_combo'):
+            self.config["llm_thinking_level"] = self.llm_thinking_level_combo.get_active_id() or "minimal"
 
         # Save Engine & Advanced Settings
         if hasattr(self, 'vad_switch'):
@@ -1470,16 +1992,16 @@ Icon=audio-input-microphone
             except Exception as e:
                 logging.error(f"Error in on_config_saved: {e}")
         elif hasattr(self, 'config_manager'):
-            self.config_manager.save_config(self.config)
+            self.config_manager.save_config(self.config, explicit_api_key_update=True)
             self._notify_daemon_reload()
 
-
-
-
-
-
-
     def show_message(self, title: str, message: str) -> None:
+        """Display an informational dialog message.
+
+        Args:
+            title: Dialog title.
+            message: Dialog body text.
+        """
         dialog = Gtk.MessageDialog(
             transient_for=self,
             flags=0,
@@ -1492,6 +2014,15 @@ Icon=audio-input-microphone
         dialog.destroy()
 
     def _create_cli_command_row(self, cmd: str, desc: str) -> Gtk.ListBoxRow:
+        """Create a selectable row displaying a CLI shortcut and a copy button.
+
+        Args:
+            cmd: Command line string.
+            desc: Localized description of what the command does.
+
+        Returns:
+            Gtk.ListBoxRow widget.
+        """
         row = Gtk.ListBoxRow()
         row.get_style_context().add_class("preference-row")
         hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -1521,6 +2052,12 @@ Icon=audio-input-microphone
         return row
 
     def _on_copy_cli_clicked(self, btn: Gtk.Button, cmd: str) -> None:
+        """Copy CLI command string to system clipboard with temporary button toast label.
+
+        Args:
+            btn: Button widget.
+            cmd: Command string to copy.
+        """
         clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
         clipboard.set_text(cmd, -1)
         original_label = btn.get_label()
@@ -1528,6 +2065,15 @@ Icon=audio-input-microphone
         GLib.timeout_add(1500, lambda: btn.set_label(original_label))
 
     def _create_guide_row(self, title: str, desc: str) -> Gtk.ListBoxRow:
+        """Create informative row with title and multiline subtitle for desktop guides.
+
+        Args:
+            title: Guide title.
+            desc: Multiline guide description.
+
+        Returns:
+            Gtk.ListBoxRow widget.
+        """
         row = Gtk.ListBoxRow()
         row.get_style_context().add_class("preference-row")
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -1549,6 +2095,7 @@ Icon=audio-input-microphone
         return row
 
     def _refresh_integrations_status(self) -> None:
+        """Check live installation status of OpenDeck plugin and GNOME Shell extension."""
         if not hasattr(self, 'opendeck_status_lbl') or not hasattr(self, 'gnome_status_lbl'):
             return
 
@@ -1579,6 +2126,11 @@ Icon=audio-input-microphone
             self.gnome_toggle_btn.set_label(self.i18n.t("btn_enable_gnome_ext"))
 
     def _on_install_opendeck_clicked(self, widget: Gtk.Button) -> None:
+        """Copy OpenDeck plugin directory to user's ~/.config/opendeck/plugins/.
+
+        Args:
+            widget: Install button widget.
+        """
         opendeck_plugins_dir = os.path.expanduser("~/.config/opendeck/plugins/")
         plugin_name = "com.kirulab.opendictate.sdplugin"
         target_dir = os.path.join(opendeck_plugins_dir, plugin_name)
@@ -1600,6 +2152,11 @@ Icon=audio-input-microphone
         self._refresh_integrations_status()
 
     def _on_toggle_gnome_ext_clicked(self, widget: Gtk.Button) -> None:
+        """Toggle enabled state of GNOME Shell extension via gnome-extensions CLI.
+
+        Args:
+            widget: Toggle button widget.
+        """
         uuid = "com.kirulab.opendictate@kirulab.com"
         btn_label = widget.get_label()
         if btn_label == self.i18n.t("btn_enable_gnome_ext"):
@@ -1607,6 +2164,286 @@ Icon=audio-input-microphone
         else:
             subprocess.run(["gnome-extensions", "disable", uuid])
         GLib.timeout_add(400, self._refresh_integrations_status)
+
+    def _rebuild_voice_actions(self) -> None:
+        """Reconstruct list of voice command actions and their registered phrases."""
+        if not hasattr(self, "list_voice_actions") or not self.list_voice_actions:
+            return
+
+        for child in self.list_voice_actions.get_children():
+            self.list_voice_actions.remove(child)
+
+        action_keys = [
+            ("START", "voice_cmd_start", "▶"),
+            ("SEND", "voice_cmd_send", "📤"),
+            ("PAUSE", "voice_cmd_pause", "⏸️"),
+            ("CANCEL", "voice_cmd_cancel", "❌"),
+        ]
+
+        for action, str_key, icon in action_keys:
+            action_title = f"{icon} {self.i18n.t(str_key)}"
+            phrases = self.voice_commands.get_phrases_for_action(action)
+
+            # Section Header Row
+            hdr_row = Gtk.ListBoxRow()
+            hdr_row.set_selectable(False)
+            hdr_row.set_activatable(False)
+            hdr_row.get_style_context().add_class("preference-row")
+            h_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            h_box.set_margin_top(8)
+            h_box.set_margin_bottom(4)
+            h_box.set_margin_left(8)
+            h_box.set_margin_right(8)
+
+            lbl_act = Gtk.Label(label=action_title, xalign=0)
+            lbl_act.get_style_context().add_class("row-title")
+            h_box.pack_start(lbl_act, True, True, 0)
+
+            btn_add_alt = Gtk.Button(label="➕ Añadir Frase")
+            btn_add_alt.get_style_context().add_class("btn-secondary")
+            btn_add_alt.connect("clicked", lambda b, act=action: self._record_voice_sample_async(act, None))
+            h_box.pack_end(btn_add_alt, False, False, 0)
+
+            hdr_row.add(h_box)
+            self.list_voice_actions.add(hdr_row)
+
+            # Phrases Rows
+            for phrase in phrases:
+                p_row = Gtk.ListBoxRow()
+                p_row.get_style_context().add_class("preference-row")
+                p_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+                p_box.set_margin_top(4)
+                p_box.set_margin_bottom(4)
+                p_box.set_margin_left(24)
+                p_box.set_margin_right(8)
+
+                p_name_lbl = Gtk.Label(label=f"🗣️ \"{phrase.name}\"", xalign=0)
+                p_name_lbl.get_style_context().add_class("row-title")
+                p_name_lbl.set_size_request(160, -1)
+                p_box.pack_start(p_name_lbl, False, False, 0)
+
+                num_samples = len(phrase.samples)
+                info_text = f"{num_samples} muestra(s) | Umbral: {phrase.threshold:.2f}"
+                info_lbl = Gtk.Label(label=info_text, xalign=0)
+                info_lbl.get_style_context().add_class("dim-label")
+                p_box.pack_start(info_lbl, True, True, 0)
+
+                btn_edit = Gtk.Button(label="🎙️ Muestras / Calibrar")
+                btn_edit.get_style_context().add_class("btn-secondary")
+                btn_edit.connect("clicked", lambda b, act=action, ph=phrase: self._record_voice_sample_async(act, ph))
+                p_box.pack_end(btn_edit, False, False, 0)
+
+                if len(phrases) > 1:
+                    btn_del = Gtk.Button(label="🗑️")
+                    btn_del.get_style_context().add_class("btn-danger-outline")
+                    btn_del.connect("clicked", lambda b, act=action, pid=phrase.id: self._delete_voice_phrase(act, pid))
+                    p_box.pack_end(btn_del, False, False, 0)
+
+                p_row.add(p_box)
+                self.list_voice_actions.add(p_row)
+
+        self.list_voice_actions.show_all()
+
+    def _delete_voice_phrase(self, action: str, phrase_id: str) -> None:
+        """Remove an alternative trigger phrase from action."""
+        self.voice_commands.remove_phrase(action, phrase_id)
+        self.voice_commands.save_templates()
+        self._rebuild_voice_actions()
+        self._notify_daemon_reload()
+
+    def _record_voice_sample_async(self, action: str, phrase: Optional[Any] = None) -> None:
+        """Launch interactive sample recorder dialog for action phrase."""
+        from ui.sample_recorder import SampleRecorderDialog
+        action_names = {
+            "START": self.i18n.t("voice_cmd_start"),
+            "SEND": self.i18n.t("voice_cmd_send"),
+            "PAUSE": self.i18n.t("voice_cmd_pause"),
+            "CANCEL": self.i18n.t("voice_cmd_cancel"),
+        }
+        name = action_names.get(action, action)
+
+        def _on_saved():
+            self._rebuild_voice_actions()
+            self._notify_daemon_reload()
+
+        dialog = SampleRecorderDialog(
+            parent=self,
+            action=action,
+            action_display_name=name,
+            voice_commands=self.voice_commands,
+            aec_manager=self.aec,
+            phrase=phrase,
+            ui_language=self.config.get("ui_language", "es"),
+            on_saved=_on_saved
+        )
+        dialog.show_all()
+
+    def _on_voice_enable_toggled(self, switch: Gtk.Switch, gparam: Any) -> None:
+        """Handle voice commands switch toggle."""
+        self.config["voice_commands_enabled"] = switch.get_active()
+        self.config_manager.save_config(self.config)
+        self._notify_daemon_reload()
+
+    def _on_voice_thresh_changed(self, scale: Gtk.Scale) -> None:
+        """Handle sensitivity threshold slider value change."""
+        self.config["voice_command_threshold"] = round(scale.get_value(), 2)
+        self.config_manager.save_config(self.config)
+        self.voice_commands.config = self.config
+
+    def _on_voice_pause_changed(self, scale: Gtk.Scale) -> None:
+        """Handle silence pause slider value change for voice commands."""
+        self.config["voice_command_silence_pause"] = round(scale.get_value(), 1)
+        self.config_manager.save_config(self.config)
+        self._notify_daemon_reload()
+
+    def _on_vad_thresh_changed(self, scale: Gtk.Scale) -> None:
+        """Handle VAD speech threshold slider value change."""
+        val = round(scale.get_value(), 3)
+        self.config["voice_vad_threshold"] = val
+        self.config_manager.save_config(self.config)
+        self.voice_commands.config = self.config
+        if hasattr(self, "vad_calib_lbl"):
+            floor = self.config.get("voice_vad_noise_floor", 0.030)
+            self.vad_calib_lbl.set_label(f"Piso: {floor:.3f} | Umbral: {val:.3f}")
+        self._notify_daemon_reload()
+
+    def _run_vad_noise_calibration(self, btn: Gtk.Button, result_lbl: Gtk.Label) -> None:
+        """Measure ambient room silence for 2s and calibrate optimal VAD threshold."""
+        import threading, subprocess, numpy as np
+        from core.ipc import SOCKET_PATH
+        btn.set_sensitive(False)
+        result_lbl.set_label("⏳ Calibrando silencio...")
+
+        # Pause daemon voice listener while calibrating
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(SOCKET_PATH)
+            s.sendall(b"pause-voice-listener")
+            s.close()
+        except Exception:
+            pass
+
+        def _worker():
+            dev = self.aec.get_preferred_capture_device()
+            cmd = ["arecord", "-t", "raw", "-f", "S16_LE", "-c", "1", "-r", "16000"]
+            if dev and dev != "default":
+                cmd.extend(["-D", dev])
+
+            samples_list = []
+            try:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                t_end = time.time() + 2.0
+                while time.time() < t_end and proc and proc.stdout:
+                    chunk = proc.stdout.read(1024)
+                    if not chunk:
+                        break
+                    pcm = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+                    rms = float(np.sqrt(np.mean(pcm ** 2)))
+                    samples_list.append(rms)
+                proc.terminate()
+                proc.wait(timeout=1.0)
+            except Exception as e:
+                logging.error(f"Error during noise calibration capture: {e}")
+
+            # Resume daemon voice listener
+            try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(0.5)
+                s.connect(SOCKET_PATH)
+                s.sendall(b"resume-voice-listener")
+                s.close()
+            except Exception:
+                pass
+
+            def _done():
+                btn.set_sensitive(True)
+                if samples_list:
+                    mean_floor = float(np.mean(samples_list))
+                    std_floor = float(np.std(samples_list))
+                    max_floor = float(np.max(samples_list))
+
+                    opt_th = max(mean_floor * 2.2, max_floor + 2.5 * std_floor, 0.015)
+                    opt_th = round(opt_th, 3)
+                    mean_floor = round(mean_floor, 3)
+
+                    self.config["voice_vad_noise_floor"] = mean_floor
+                    self.config["voice_vad_threshold"] = opt_th
+                    self.config_manager.save_config(self.config)
+                    self.voice_commands.config = self.config
+                    if hasattr(self, "vad_thresh_scale"):
+                        self.vad_thresh_scale.set_value(opt_th)
+                    result_lbl.set_label(f"✅ Piso: {mean_floor:.3f} | Umbral: {opt_th:.3f}")
+                    self._notify_daemon_reload()
+                else:
+                    result_lbl.set_label("⚠️ Error de captura")
+                return False
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _clear_voice_samples(self, action: str) -> None:
+        """Reset enrolled templates for given action."""
+        self.voice_commands.clear_templates(action)
+        self.voice_commands.save_templates()
+        self._rebuild_voice_actions()
+        self._notify_daemon_reload()
+
+    def _run_aec_calibration(self, btn: Gtk.Button, result_lbl: Gtk.Label) -> None:
+        """Run acoustic chirp test to measure speaker-to-mic latency."""
+        import threading, socket
+        from core.ipc import SOCKET_PATH
+        btn.set_sensitive(False)
+        result_lbl.set_label(self.i18n.t("calibrating"))
+
+        # Pause daemon voice listener during chirp playback
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(SOCKET_PATH)
+            s.sendall(b"pause-voice-listener")
+            s.close()
+        except Exception:
+            pass
+
+        def _worker():
+            dev = self.aec.get_preferred_capture_device()
+            calibrator = AcousticCalibrator()
+            res = calibrator.run_calibration(capture_device=dev)
+
+            # Resume daemon voice listener
+            try:
+                s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                s.settimeout(0.5)
+                s.connect(SOCKET_PATH)
+                s.sendall(b"resume-voice-listener")
+                s.close()
+            except Exception:
+                pass
+
+            def _done():
+                btn.set_sensitive(True)
+                result_lbl.set_label(res.message)
+                return False
+
+            GLib.idle_add(_done)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _notify_daemon_reload(self) -> None:
+        """Signal running daemon to reload config via Unix domain socket."""
+        try:
+            import socket
+            from core.ipc import SOCKET_PATH
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(SOCKET_PATH)
+            s.sendall(b"reload-config")
+            s.close()
+        except Exception:
+            pass
+
 
 
 if __name__ == "__main__":

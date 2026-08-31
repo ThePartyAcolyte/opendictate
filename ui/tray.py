@@ -23,6 +23,8 @@ except (ValueError, ImportError):
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 class TrayManager:
+    """Manages system tray indicator (AyatanaAppIndicator / Gtk.StatusIcon) and popup menu."""
+
     def __init__(
         self,
         config: Dict[str, Any],
@@ -34,6 +36,18 @@ class TrayManager:
         on_quit: Callable[[], None],
         show_notification: Callable[[str, str], None]
     ) -> None:
+        """Initialize the tray manager with callbacks and configuration.
+
+        Args:
+            config: Application configuration dictionary.
+            i18n: Translator instance for localized labels.
+            on_toggle_record_pause: Callback for primary record/pause action.
+            on_toggle_auto_send: Callback for toggling auto-send on paste.
+            on_toggle_ai: Callback for toggling AI cleanup.
+            on_open_config: Callback for presenting settings window.
+            on_quit: Callback for quitting application.
+            show_notification: Callback to display system notifications.
+        """
         self.config = config
         self.i18n = i18n
         self.on_toggle_record_pause = on_toggle_record_pause
@@ -56,6 +70,7 @@ class TrayManager:
         self.build_menu()
 
     def build_menu(self) -> None:
+        """Construct or refresh the GTK system tray menu items and bindings."""
         should_show = (
             self.config.get("initial_setup_completed", False)
             and self.config.get("use_appindicator", False)
@@ -126,21 +141,49 @@ class TrayManager:
             except Exception: pass
 
     def _on_activate(self, icon: Gtk.StatusIcon) -> None:
+        """Handle left-click on Gtk.StatusIcon (X11).
+
+        Args:
+            icon: Gtk.StatusIcon emitting the signal.
+        """
         self.on_toggle_record_pause()
 
     def _on_popup_menu(self, icon: Gtk.StatusIcon, button: int, activate_time: int) -> None:
+        """Handle right-click context menu popup on Gtk.StatusIcon (X11).
+
+        Args:
+            icon: Gtk.StatusIcon emitting the signal.
+            button: Mouse button identifier.
+            activate_time: Event timestamp.
+        """
         if self.menu:
             self.menu.popup(None, None, Gtk.StatusIcon.position_menu, icon, button, activate_time)
 
     def _on_auto_send_toggled(self, widget: Gtk.CheckMenuItem) -> None:
+        """Handle auto-send menu checkbox toggle event.
+
+        Args:
+            widget: CheckMenuItem being toggled.
+        """
         if not self._updating_toggles:
             self.on_toggle_auto_send(widget.get_active())
 
     def _on_ai_toggled(self, widget: Gtk.CheckMenuItem) -> None:
+        """Handle AI cleanup menu checkbox toggle event.
+
+        Args:
+            widget: CheckMenuItem being toggled.
+        """
         if not self._updating_toggles:
             self.on_toggle_ai(widget.get_active())
 
     def update_toggles(self, auto_send: bool, ai_enabled: bool) -> None:
+        """Synchronize tray checkbox states with application configuration.
+
+        Args:
+            auto_send: Active auto-send state.
+            ai_enabled: Active AI cleanup state.
+        """
         self._updating_toggles = True
         if self.auto_send_check and self.auto_send_check.get_active() != auto_send:
             self.auto_send_check.set_active(auto_send)
@@ -149,6 +192,11 @@ class TrayManager:
         self._updating_toggles = False
 
     def set_daemon_state(self, state: str) -> None:
+        """Update tray icon and menu action label according to daemon state machine.
+
+        Args:
+            state: Current daemon state (e.g. 'IDLE', 'RECORDING', 'PAUSED', 'TRANSCRIBING').
+        """
         if not self.indicator:
             return
 
@@ -179,3 +227,25 @@ class TrayManager:
 
         if self.record_menu_item:
             self.record_menu_item.set_label(action_label)
+
+    def set_mic_health(self, health: str) -> None:
+        """Update tray indicator state based on microphone saturation/health.
+
+        Args:
+            health: 'HEALTHY' or 'CLIPPED'.
+        """
+        if not self.indicator:
+            return
+
+        if health == "CLIPPED":
+            if self.use_appindicator:
+                try:
+                    self.indicator.set_icon_full("audio-volume-high", "OpenDictate (Mic Saturated)")
+                except Exception:
+                    pass
+            elif hasattr(self.indicator, "set_tooltip_text"):
+                try:
+                    self.indicator.set_tooltip_text("OpenDictate - Micrófono saturado")
+                except Exception:
+                    pass
+

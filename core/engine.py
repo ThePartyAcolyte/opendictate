@@ -139,6 +139,15 @@ class WhisperEngine:
             logging.error("Failed to initialize any Faster-Whisper model (no local models cached and no network connection).")
             return False, None, "failed_no_models"
 
+    def unload_model(self) -> None:
+        """Release Faster-Whisper model from RAM and trigger garbage collection."""
+        with self.lock:
+            if self.model is not None:
+                logging.info(f"Unloading Faster-Whisper model '{self.model_size}' from memory...")
+                self.model = None
+                import gc
+                gc.collect()
+
     def transcribe_chunk(
         self,
         audio_float32: np.ndarray,
@@ -192,15 +201,9 @@ class WhisperEngine:
 
         temp = float(config.get("temperature", 0.0))
         if temp <= 0.0:
-            kwargs["temperature"] = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+            kwargs["temperature"] = [0.0, 0.1, 0.2]
         else:
-            # Dynamic fallback ladder starting at user temperature up to 1.0
-            fallback_ladder = [temp]
-            curr = round(temp + 0.2, 2)
-            while curr <= 1.0:
-                fallback_ladder.append(curr)
-                curr = round(curr + 0.2, 2)
-            kwargs["temperature"] = fallback_ladder if len(fallback_ladder) > 1 else temp
+            kwargs["temperature"] = [temp, round(min(1.0, temp + 0.1), 2), round(min(1.0, temp + 0.2), 2)]
 
         with self.lock:
             segments_gen, info = self.model.transcribe(audio_float32, **kwargs)

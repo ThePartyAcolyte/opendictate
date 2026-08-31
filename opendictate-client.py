@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-import sys
-import socket
+"""
+Command-Line Interface (CLI) client for OpenDictate.
+
+Dispatches IPC commands (record, pause, cancel, send, toggle flags, open settings/wizard)
+to the running background daemon via Unix Domain Socket, with offline fallback window launchers.
+"""
+
 import os
+import socket
 import sys
 
 # Allow running from the install directory or the repo root
@@ -11,7 +17,9 @@ if _script_dir not in sys.path:
 
 from core.ipc import SOCKET_PATH
 
-def main():
+
+def main() -> None:
+    """Parse CLI arguments and dispatch command to OpenDictate daemon or open offline windows."""
     if "--record" in sys.argv or "record" in sys.argv:
         cmd = "record"
     elif "--pause" in sys.argv or "pause" in sys.argv:
@@ -40,8 +48,12 @@ def main():
         cmd = "settings"
     elif "--wizard" in sys.argv or "wizard" in sys.argv:
         cmd = "wizard"
+    elif "--check-updates" in sys.argv or "check-updates" in sys.argv:
+        cmd = "check-updates"
+    elif "--update" in sys.argv or "update" in sys.argv:
+        cmd = "update-dialog"
     else:
-        print("Usage: opendictate [--record|--pause|--cancel|--finish-normal|--finish-ai|--settings|--wizard|--toggle-bubble|--toggle-record-send|--toggle-ai|--toggle-autosend|--toggle-realtime|--cycle-model]")
+        print("Usage: opendictate [--record|--pause|--cancel|--finish-normal|--finish-ai|--settings|--wizard|--check-updates|--update|--toggle-bubble|--toggle-record-send|--toggle-ai|--toggle-autosend|--toggle-realtime|--cycle-model]")
         sys.exit(0)
 
     try:
@@ -71,18 +83,47 @@ def main():
                 gi.require_version('Gtk', '3.0')
                 from gi.repository import Gtk
                 from ui.wizard import FirstRunWizard
-                from core.config import CONFIG_PATH, ConfigManager
+                from core.config import ConfigManager
                 cm = ConfigManager()
-                cfg = cm.load_config()
-                win = FirstRunWizard(cfg, CONFIG_PATH, on_finish=cm.save_config)
+                win = FirstRunWizard(cm, on_finish=cm.save_config)
                 win.connect("destroy", Gtk.main_quit)
                 Gtk.main()
                 sys.exit(0)
             except Exception as ex:
                 print(f"Error opening wizard window: {ex}")
                 sys.exit(1)
+        elif cmd in ("check-updates", "update-dialog"):
+            try:
+                import gi
+                gi.require_version('Gtk', '3.0')
+                from gi.repository import Gtk
+                from core.config import ConfigManager
+                from core.updater import check_for_updates
+                from ui.update_dialog import show_update_dialog
+                cm = ConfigManager()
+                cfg = cm.load_config()
+
+                def _on_found(uinfo):
+                    win = show_update_dialog(cfg, cm, uinfo)
+                    win.connect("destroy", Gtk.main_quit)
+
+                def _on_latest():
+                    print("OpenDictate is already up to date.")
+                    sys.exit(0)
+
+                def _on_err(err):
+                    print(f"Error checking updates: {err}")
+                    sys.exit(1)
+
+                check_for_updates(cfg, cm, force=True, on_update_found=_on_found, on_up_to_date=_on_latest, on_error=_on_err)
+                Gtk.main()
+                sys.exit(0)
+            except Exception as ex:
+                print(f"Error checking updates offline: {ex}")
+                sys.exit(1)
         print(f"Error connecting to daemon: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

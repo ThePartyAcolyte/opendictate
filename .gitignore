@@ -7,3 +7,4 @@ venv/
 *.deb
 *.pyc
 .vscode/
+AGENTS.md
