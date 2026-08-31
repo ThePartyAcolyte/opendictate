@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 1.2.0-rc1 (Nightly / Dev)
+## [1.2.0-nightly.20260831] - 2026-08-31
 
 ### Architectural Note: Gemini API Strategy
 - **Gemini Live Speech-to-Text (`gemini-3.5-transcribe-live`)**: Added to provide continuous bidirectional real-time audio transcription over WebSockets. Offloads heavy neural compute from the host system, eliminating local GPU/CPU load and reducing daemon RAM consumption from ~1.8 GB to <70 MB.
