@@ -49,6 +49,16 @@ class TestGeminiLiveEngine(unittest.TestCase):
         self.assertFalse(self.engine.is_active())
         self.assertEqual(final_text, "Hola mundo")
 
+    def test_turn_complete_unblocks_final_event(self):
+        """Test that server turn_complete signal sets final_event."""
+        self.engine._is_active = True
+        self.engine._stream_end_requested = True
+        self.assertFalse(self.engine._final_event.is_set())
+
+        # Simulate receiver loop receiving turn_complete
+        self.engine._final_event.set()
+        self.assertTrue(self.engine._final_event.is_set())
+
 
 if __name__ == "__main__":
     unittest.main()

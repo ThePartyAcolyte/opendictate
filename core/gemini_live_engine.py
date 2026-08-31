@@ -151,13 +151,15 @@ class GeminiLiveEngine:
                 sender_task = asyncio.create_task(self._sender_loop(session))
                 receiver_task = asyncio.create_task(self._receiver_loop(session))
 
-                # Run until both finish or stream end terminates receiver
-                done, pending = await asyncio.wait(
-                    [sender_task, receiver_task],
-                    return_when=asyncio.FIRST_COMPLETED
-                )
-                for task in pending:
-                    task.cancel()
+                # Allow sender_task to finish pumping all queued audio and send audio_stream_end
+                await sender_task
+
+                # Wait for receiver_task to collect final transcription and receive turn_complete
+                try:
+                    await asyncio.wait_for(receiver_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    logging.warning("GeminiLiveEngine: Receiver task timed out waiting for server completion.")
+                    receiver_task.cancel()
 
         except Exception as err:
             logging.error(f"GeminiLiveEngine connection exception: {err}", exc_info=True)
@@ -222,15 +224,12 @@ class GeminiLiveEngine:
                         if self.on_final_text and self._is_active:
                             self.on_final_text(self.accumulated_text)
 
+                # 3. Server turn completion signal
+                if server_content.turn_complete:
+                    logging.info("GeminiLiveEngine: Server turn_complete received.")
                     if self._stream_end_requested:
                         self._final_event.set()
-                        # Short delay to allow any subsequent final chunk before closing
-                        await asyncio.sleep(0.15)
                         break
-
-                if server_content.turn_complete and self._stream_end_requested:
-                    self._final_event.set()
-                    break
 
         except asyncio.CancelledError:
             pass
@@ -238,6 +237,7 @@ class GeminiLiveEngine:
             logging.error(f"GeminiLiveEngine receive error: {e}")
             if self.on_error:
                 self.on_error(e)
+        finally:
             self._final_event.set()
 
     def send_audio_chunk(self, pcm_bytes: bytes) -> None:
@@ -254,7 +254,7 @@ class GeminiLiveEngine:
         except Exception as e:
             logging.debug(f"GeminiLiveEngine failed to enqueue audio chunk: {e}")
 
-    def stop_session(self, timeout: float = 2.0) -> str:
+    def stop_session(self, timeout: float = 3.5) -> str:
         """Signal end of audio stream, wait for final transcript, and close session.
 
         Args:
@@ -272,7 +272,7 @@ class GeminiLiveEngine:
             if self._loop and self._audio_queue:
                 self._loop.call_soon_threadsafe(self._audio_queue.put_nowait, None)
 
-            # Wait for final server transcription event with minimal latency
+            # Wait for final server transcription event with safe timeout
             self._final_event.wait(timeout=timeout)
 
             self._is_active = False

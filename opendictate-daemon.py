@@ -710,7 +710,10 @@ class DictationDaemon:
         self.processing_start_time = time.time()
         self.update_status(self.i18n.t("transcribing"))
 
-        self.audio.stop_recording()
+        trailing_pcm = self.audio.stop_recording()
+        if trailing_pcm and self.gemini_live_engine.is_active():
+            self.gemini_live_engine.send_audio_chunk(trailing_pcm)
+
         self.media.resume_media()
         self.play_sound("/usr/share/sounds/freedesktop/stereo/device-removed.oga")
 
@@ -732,7 +735,7 @@ class DictationDaemon:
 
             with self.transcribe_lock:
                 if self.config.get("stt_backend", "local_whisper") == "gemini_live" and self.gemini_live_engine.is_active():
-                    live_text = self.gemini_live_engine.stop_session(timeout=2.0)
+                    live_text = self.gemini_live_engine.stop_session(timeout=3.5)
                     if live_text:
                         self.confirmed_text = live_text
                 elif not self.config.get("realtime_mode", True):

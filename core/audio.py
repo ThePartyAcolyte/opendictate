@@ -93,12 +93,32 @@ class AudioRecorder:
 
         return True
 
-    def stop_recording(self) -> None:
-        """Terminate the arecord process group safely and close file handles."""
+    def stop_recording(self) -> bytes:
+        """Terminate the arecord process group safely, drain remaining pipe buffer, and close file handles.
+
+        Returns:
+            Trailing PCM audio bytes drained from pipe before process termination.
+        """
+        trailing_data = b""
         if self.record_proc:
             proc = self.record_proc
             self.record_proc = None
             try:
+                # Drain any remaining buffered data non-blocking from stdout
+                if proc.stdout:
+                    try:
+                        import fcntl
+                        fd = proc.stdout.fileno()
+                        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+                        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+                        while True:
+                            chunk = proc.stdout.read(4096)
+                            if not chunk:
+                                break
+                            trailing_data += chunk
+                    except Exception:
+                        pass
+
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
                 proc.wait(timeout=0.3)
             except Exception:
@@ -107,9 +127,16 @@ class AudioRecorder:
                 except Exception:
                     pass
 
+        if trailing_data:
+            self.audio_buffer.extend(trailing_data)
+            if self.audio_file_handle and not self.audio_file_handle.closed:
+                self.audio_file_handle.write(trailing_data)
+
         if self.audio_file_handle:
             try:
                 self.audio_file_handle.close()
             except Exception:
                 pass
             self.audio_file_handle = None
+
+        return trailing_data
