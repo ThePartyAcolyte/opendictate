@@ -39,6 +39,7 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
 
+import uuid
 from i18n import get_translator
 from core.config import ConfigManager, CONFIG_PATH, is_api_available
 from core.audio import AudioRecorder
@@ -51,7 +52,8 @@ from core.aec import EchoCancelManager
 from core.voice_commands import VoiceCommandManager
 from core.audio_concurrency import is_microphone_in_use_by_other_apps
 from core.ipc import IPCServer, SOCKET_PATH
-from core.window_utils import get_active_window_info, restore_window_focus
+from core.dbus_service import OpenDictateDBusService
+from core.window_utils import get_active_window_info, restore_window_focus, get_open_windows_list
 from ui.bubble import BubbleWindow
 from ui.tray import TrayManager
 
@@ -97,8 +99,12 @@ class DictationDaemon:
         self.wizard_window = None
         self.update_window = None
 
-        self.current_app_class: str = "unknown"
-        self.current_window_title: str = "unknown"
+        # On Omarchy environments, hide the GTK floating bubble by default unless overridden
+        is_omarchy = os.path.exists(os.path.expanduser("~/.config/omarchy")) or bool(shutil.which("omarchy-shell"))
+        if is_omarchy:
+            if "hide_bubble" not in self.config:
+                self.config["hide_bubble"] = True
+                self.config_manager.save_config(self.config)
 
         # UI Components
         self.bubble = BubbleWindow(
@@ -108,6 +114,9 @@ class DictationDaemon:
             on_send=self.action_send,
             on_cancel=self.action_cancel
         )
+        if self.config.get("hide_bubble", False):
+            self.bubble.hide()
+
         self.tray = TrayManager(
             config=self.config,
             i18n=self.i18n,
@@ -140,11 +149,29 @@ class DictationDaemon:
             "check-updates": lambda: GLib.idle_add(self.action_check_updates),
             "update-dialog": lambda: GLib.idle_add(self.open_update_window),
             "reload-config": lambda: GLib.idle_add(self.on_config_saved),
+            "set-config:": lambda p: GLib.idle_add(self._handle_set_config, p),
+            "set-json:": lambda p: GLib.idle_add(self._handle_set_json, p),
+            "save-profile:": lambda p: GLib.idle_add(self._handle_save_profile, p),
+            "delete-profile:": lambda p: GLib.idle_add(self._handle_delete_profile, p),
             "pause-voice-listener": lambda: GLib.idle_add(self._pause_voice_listener_by_ui),
             "resume-voice-listener": lambda: GLib.idle_add(self._resume_voice_listener_by_ui),
         }
         self.ipc = IPCServer(self.ipc_handlers)
         threading.Thread(target=self.ipc.start, daemon=True).start()
+
+        # D-Bus Session API (org.kirulab.OpenDictate)
+        self.active_dbus_session_id = None
+        self.dbus_session_options = {}
+        self.reserved_dbus_session = None
+        self.dbus_service = OpenDictateDBusService(
+            on_start_capture=self._dbus_start_capture_session,
+            on_stop_capture=self._dbus_stop_capture_session,
+            on_cancel_capture=self._dbus_cancel_capture_session,
+            on_reserve_capture=self._dbus_reserve_capture_session,
+            on_release_reserved=self._dbus_release_reserved_session,
+            on_get_status=self._dbus_get_status,
+        )
+        self.dbus_service.start()
 
         # Check first run onboarding
         if not self.config.get("initial_setup_completed", False):
@@ -231,6 +258,20 @@ class DictationDaemon:
         else:
             status_text = self.i18n.t(key)
 
+        bar_pos = "right"
+        try:
+            shell_p = os.path.expanduser("~/.config/omarchy/shell.json")
+            if os.path.exists(shell_p):
+                with open(shell_p, "r") as f:
+                    s_data = json.load(f)
+                b_layout = s_data.get("bar", {}).get("layout", {})
+                for section in ["left", "center", "right"]:
+                    if any(isinstance(it, dict) and it.get("id") == "com.kirulab.opendictate" for it in b_layout.get(section, [])):
+                        bar_pos = section
+                        break
+        except Exception:
+            pass
+
         state_data = {
             "state": self.state,
             "status_text": status_text,
@@ -250,15 +291,188 @@ class DictationDaemon:
             "send_status": getattr(self, "send_status", "idle"),
             "start_time": self.start_time,
             "pause_start_time": self.pause_start_time,
-            "total_paused_time": self.total_paused_time
+            "total_paused_time": self.total_paused_time,
+            "bar_position": bar_pos,
+            "reserved_session": getattr(self, "reserved_dbus_session", None),
+            "app_profiles": self.config_manager.get_all_app_profiles(),
+            "open_windows": get_open_windows_list(),
+            "voice_actions": [
+                {"action": "START", "label": self.i18n.t("voice_cmd_start"), "icon": "▶", "phrases": [p.name for p in self.voice_commands.get_phrases_for_action("START")]},
+                {"action": "SEND", "label": self.i18n.t("voice_cmd_send"), "icon": "📤", "phrases": [p.name for p in self.voice_commands.get_phrases_for_action("SEND")]},
+                {"action": "PAUSE", "label": self.i18n.t("voice_cmd_pause"), "icon": "⏸️", "phrases": [p.name for p in self.voice_commands.get_phrases_for_action("PAUSE")]},
+                {"action": "CANCEL", "label": self.i18n.t("voice_cmd_cancel"), "icon": "❌", "phrases": [p.name for p in self.voice_commands.get_phrases_for_action("CANCEL")]},
+            ],
+            "config": self.config
         }
+        tmp_path = f"/tmp/opendictate_state_{os.getpid()}.json.tmp"
         try:
-            tmp_path = f"/tmp/opendictate_state_{os.getpid()}.json.tmp"
             with open(tmp_path, "w") as f:
                 json.dump(state_data, f)
             os.replace(tmp_path, "/tmp/opendictate_state.json")
         except Exception as e:
             logging.debug(f"Error exporting state JSON: {e}")
+
+    # -------------------------------------------------------------------------
+    # D-Bus Session API Handlers (org.kirulab.OpenDictate)
+    # -------------------------------------------------------------------------
+    def _dbus_start_capture_session(self, options: dict) -> str:
+        """Handle StartCaptureSession called by an external process over D-Bus with eviction support."""
+        session_id = str(options.get("session_id") or uuid.uuid4())
+        logging.info(f"D-Bus StartCaptureSession requested: session_id='{session_id}', options={options}")
+
+        # Evict previous reservation if different UUID
+        if self.reserved_dbus_session:
+            old_res = self.reserved_dbus_session.get("session_id")
+            if old_res and old_res != session_id:
+                logging.info(f"Evicting previous reserved session '{old_res}' due to direct StartCaptureSession '{session_id}'")
+                self.dbus_service.emit_session_cancelled(old_res)
+                self.dbus_service.emit_session_reservation_released(old_res)
+                self.reserved_dbus_session = None
+
+        # Evict previous active session if different UUID
+        if self.active_dbus_session_id and self.active_dbus_session_id != session_id:
+            old_act = self.active_dbus_session_id
+            logging.info(f"Evicting active session '{old_act}' in favor of '{session_id}'")
+            self.dbus_service.emit_session_cancelled(old_act)
+
+        self.active_dbus_session_id = session_id
+        self.dbus_session_options = options
+
+        if self.state in ["RECORDING", "PAUSED"]:
+            logging.info("Already recording. Binding active recording to D-Bus session.")
+        else:
+            GLib.idle_add(self.start_recording)
+
+        self.dbus_service.emit_session_started(session_id)
+        return session_id
+
+    def _dbus_stop_capture_session(self, session_id: str) -> None:
+        """Handle StopCaptureSession called over D-Bus."""
+        logging.info(f"D-Bus StopCaptureSession requested: session_id='{session_id}'")
+        if self.state in ["RECORDING", "PAUSED"]:
+            GLib.idle_add(self.action_send)
+
+    def _dbus_cancel_capture_session(self, session_id: str) -> None:
+        """Handle CancelCaptureSession called over D-Bus."""
+        logging.info(f"D-Bus CancelCaptureSession requested: session_id='{session_id}'")
+        if self.state in ["RECORDING", "PAUSED"]:
+            GLib.idle_add(self.action_cancel)
+        elif self.reserved_dbus_session and self.reserved_dbus_session.get("session_id") == session_id:
+            self._dbus_release_reserved_session(session_id)
+
+    def _dbus_reserve_capture_session(self, options: dict) -> str:
+        """Arm OpenDictate for the next dictation with client UUID and explicit eviction of prior sessions."""
+        session_id = str(options.get("session_id") or uuid.uuid4())
+        app_name = str(options.get("app_name") or "App Externa")
+        accent_color = str(options.get("accent_color") or "#FF5500")
+
+        # Evict previous reservation if a new UUID was submitted
+        if self.reserved_dbus_session:
+            old_sid = self.reserved_dbus_session.get("session_id")
+            if old_sid and old_sid != session_id:
+                logging.info(f"Evicting previous reserved session '{old_sid}' in favor of new reservation '{session_id}' ({app_name})")
+                self.dbus_service.emit_session_cancelled(old_sid)
+                self.dbus_service.emit_session_reservation_released(old_sid)
+
+        # Evict active recording if another app claims the mic
+        if self.state in ["RECORDING", "PAUSED"] and self.active_dbus_session_id and self.active_dbus_session_id != session_id:
+            old_active = self.active_dbus_session_id
+            logging.info(f"Aborting audio capture of evicted session '{old_active}' for new reservation '{session_id}'")
+            self.dbus_service.emit_session_cancelled(old_active)
+            self.audio.stop_recording()
+            self.active_dbus_session_id = None
+            self.state = "IDLE"
+            self.media.resume_media()
+
+        logging.info(f"D-Bus ReserveCaptureSession armed: session_id='{session_id}', app='{app_name}', color='{accent_color}'")
+        self.reserved_dbus_session = {
+            "session_id": session_id,
+            "app_name": app_name,
+            "accent_color": accent_color,
+            "options": options
+        }
+        self.export_state(force=True)
+        self.dbus_service.emit_session_reserved(session_id, app_name, accent_color)
+        return session_id
+
+    def _dbus_release_reserved_session(self, session_id: str) -> None:
+        """Release armed dictation reservation."""
+        logging.info(f"D-Bus ReleaseReservedSession requested: session_id='{session_id}'")
+        if self.reserved_dbus_session and (not session_id or self.reserved_dbus_session.get("session_id") == session_id):
+            sid = self.reserved_dbus_session.get("session_id", session_id)
+            self.reserved_dbus_session = None
+            if self.active_dbus_session_id == sid:
+                self.active_dbus_session_id = None
+                self.dbus_session_options = {}
+            self.export_state(force=True)
+            self.dbus_service.emit_session_reservation_released(sid)
+
+    def _dbus_get_status(self) -> dict:
+        """Return daemon status dictionary for GetStatus D-Bus method."""
+        return {
+            "state": self.state,
+            "active_dbus_session": self.active_dbus_session_id,
+            "reserved_session": self.reserved_dbus_session,
+            "model": self.engine.model_size,
+            "stt_backend": self.config.get("stt_backend", "local_whisper"),
+            "ai_enabled": self.config.get("ai_enabled", False),
+        }
+
+    def _handle_save_profile(self, payload: str) -> None:
+        """Handle saving an app profile over IPC."""
+        try:
+            data = json.loads(payload)
+            app_class = data.get("app_class", "").strip()
+            prompt = data.get("system_prompt", "")
+            vision = bool(data.get("enable_vision", False))
+            if app_class:
+                self.config_manager.save_app_profile(app_class, prompt, vision)
+                self.export_state(force=True)
+                self.show_notification("OpenDictate", f"Perfil '{app_class}' guardado")
+        except Exception as e:
+            logging.error(f"Error handling save-profile IPC command: {e}")
+
+    def _handle_delete_profile(self, app_class: str) -> None:
+        """Handle deleting an app profile over IPC."""
+        try:
+            if app_class and app_class.strip():
+                self.config_manager.delete_app_profile(app_class.strip())
+                self.export_state(force=True)
+                self.show_notification("OpenDictate", f"Perfil '{app_class.strip()}' eliminado")
+        except Exception as e:
+            logging.error(f"Error handling delete-profile IPC command: {e}")
+
+    def _handle_set_config(self, payload: str) -> None:
+        """Handle key:value single configuration update over IPC."""
+        parts = payload.split(":", 1)
+        if len(parts) == 2:
+            key, val_str = parts[0].strip(), parts[1].strip()
+            if val_str.lower() == "true":
+                val = True
+            elif val_str.lower() == "false":
+                val = False
+            else:
+                try:
+                    val = float(val_str) if "." in val_str else int(val_str)
+                except ValueError:
+                    val = val_str
+            self.config[key] = val
+            self.config_manager.save_config(self.config, explicit_api_key_update=(key == "api_key"))
+            self.on_config_saved(self.config)
+            self.export_state(force=True)
+
+    def _handle_set_json(self, payload: str) -> None:
+        """Handle bulk JSON configuration dictionary update over IPC."""
+        try:
+            updates = json.loads(payload)
+            if isinstance(updates, dict):
+                has_api_key = "api_key" in updates
+                self.config.update(updates)
+                self.config_manager.save_config(self.config, explicit_api_key_update=has_api_key)
+                self.on_config_saved(self.config)
+                self.export_state(force=True)
+        except Exception as e:
+            logging.error(f"Error handling set-json IPC command: {e}")
 
     def quit_app(self) -> None:
         """Export OFFLINE state telemetry and exit GTK main loop."""
@@ -338,6 +552,8 @@ class DictationDaemon:
             except Exception:
                 pass
             self.bubble.set_interactive_mode(not is_gnome_ext)
+        if self.config.get("hide_bubble", False):
+            self.bubble.hide()
 
     # -------------------------------------------------------------------------
     # Voice Commands & Saturation Monitoring
@@ -498,9 +714,15 @@ class DictationDaemon:
 
         self._stop_idle_voice_command_listener()
         self.voice_commands.reset_buffer(cooldown=1.5)
-        self.current_app_class, self.current_window_title = get_active_window_info()
+        self.current_app_class, self.current_window_title, self.current_window_address = get_active_window_info()
         self.play_sound("/usr/share/sounds/freedesktop/stereo/audio-volume-change.oga")
         self.media.pause_media(self.config)
+
+        # Bind armed reserved D-Bus session if present
+        if self.reserved_dbus_session and not self.active_dbus_session_id:
+            self.active_dbus_session_id = self.reserved_dbus_session["session_id"]
+            self.dbus_session_options = self.reserved_dbus_session.get("options", {})
+            logging.info(f"Binding active recording to armed reserved D-Bus session='{self.active_dbus_session_id}'")
 
         self.state = "RECORDING"
         self.start_time = time.time()
@@ -840,6 +1062,16 @@ class DictationDaemon:
 
             if not text:
                 logging.info("Transcription yielded empty text after command stripping. Resetting state.")
+                if self.active_dbus_session_id:
+                    self.dbus_service.emit_session_finished(
+                        session_id=self.active_dbus_session_id,
+                        raw_text="",
+                        processed_text="",
+                        status="empty"
+                    )
+                    self.active_dbus_session_id = None
+                    self.reserved_dbus_session = None
+                    self.dbus_session_options = {}
                 self.reset_state()
                 return
 
@@ -853,6 +1085,8 @@ class DictationDaemon:
                 use_llm = True
             elif self.next_action == "FINISH_NORMAL":
                 use_llm = False
+            elif self.active_dbus_session_id and "ai_processing" in self.dbus_session_options:
+                use_llm = bool(self.dbus_session_options["ai_processing"])
             else:
                 use_llm = self.config.get("ai_enabled", False) or has_app_override
 
@@ -883,15 +1117,17 @@ class DictationDaemon:
         Args:
             text: Raw speech text to process.
         """
+        custom_prompt = self.dbus_session_options.get("ai_prompt") if self.active_dbus_session_id else None
         cleaned = self.llm.clean_text(
             text, self.config, self.current_app_class,
-            on_chunk=lambda chunk: GLib.idle_add(self.bubble.set_live_text, chunk) if self.state != "IDLE" else None
+            on_chunk=lambda chunk: GLib.idle_add(self.bubble.set_live_text, chunk) if self.state != "IDLE" else None,
+            custom_prompt=custom_prompt
         )
         if self.state != "IDLE":
             GLib.idle_add(self.finalize_text, cleaned)
 
     def finalize_text(self, text: str) -> None:
-        """Store dictation into SQLite history and schedule automatic paste.
+        """Store dictation into SQLite history and dispatch to D-Bus or automatic paste.
 
         Args:
             text: Finalized (and optionally AI-cleaned) text string.
@@ -903,6 +1139,23 @@ class DictationDaemon:
         original = getattr(self, 'last_original_text', text)
         llm_text = text if original != text else None
         self.config_manager.save_history_record(self.current_app_class, self.current_window_title, original, llm_text)
+
+        # Route to D-Bus signal if this was an external capture session
+        if self.active_dbus_session_id:
+            sid = self.active_dbus_session_id
+            logging.info(f"D-Bus capture session finalized: session_id='{sid}'")
+            self.dbus_service.emit_session_finished(
+                session_id=sid,
+                raw_text=original,
+                processed_text=text,
+                status="ok" if original else "empty"
+            )
+            self.active_dbus_session_id = None
+            self.reserved_dbus_session = None
+            self.dbus_session_options = {}
+            self.bubble.hide()
+            self.reset_state()
+            return
 
         self.current_text = text
         GLib.timeout_add(600, self.execute_paste, text, self.config.get("auto_send", False))
@@ -927,22 +1180,41 @@ class DictationDaemon:
         def _do_paste():
             try:
                 if self.config.get("restore_window_focus", False):
-                    restore_window_focus(self.current_app_class, self.current_window_title)
+                    restore_window_focus(self.current_app_class, self.current_window_title, getattr(self, "current_window_address", None))
                     time.sleep(0.15)
 
                 wl_copy_path = shutil.which("wl-copy")
+                wtype_path = shutil.which("wtype")
+                ydotool_path = shutil.which("ydotool")
+
                 if wl_copy_path:
                     subprocess.run([wl_copy_path], input=full_text, text=True)
                     time.sleep(0.05)
-                    subprocess.run(["ydotool", "key", "29:1", "47:1", "47:0", "29:0"])
+                    if wtype_path:
+                        app_name = (self.current_app_class or "").lower()
+                        is_terminal = any(term in app_name for term in ["ghostty", "alacritty", "kitty", "foot", "terminal", "pty"])
+                        if is_terminal:
+                            subprocess.run([wtype_path, "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"])
+                        else:
+                            subprocess.run([wtype_path, "-M", "ctrl", "-k", "v", "-m", "ctrl"])
+                        if auto_send:
+                            time.sleep(0.05)
+                            subprocess.run([wtype_path, "-k", "Return"])
+                    elif ydotool_path:
+                        subprocess.run([ydotool_path, "key", "29:1", "47:1", "47:0", "29:0"])
+                        if auto_send:
+                            time.sleep(0.05)
+                            subprocess.run([ydotool_path, "key", "28:1", "28:0"])
+                elif wtype_path:
+                    subprocess.run([wtype_path, full_text])
                     if auto_send:
                         time.sleep(0.05)
-                        subprocess.run(["ydotool", "key", "28:1", "28:0"])
-                else:
-                    subprocess.run(["ydotool", "type", full_text])
+                        subprocess.run([wtype_path, "-k", "Return"])
+                elif ydotool_path:
+                    subprocess.run([ydotool_path, "type", full_text])
                     if auto_send:
                         time.sleep(0.05)
-                        subprocess.run(["ydotool", "key", "28:1", "28:0"])
+                        subprocess.run([ydotool_path, "key", "28:1", "28:0"])
             except Exception as e:
                 logging.error(f"Error during automatic paste: {e}", exc_info=True)
             finally:
@@ -982,6 +1254,11 @@ class DictationDaemon:
             self.config["window_height"] = size[1]
             self.config_manager.save_config(self.config)
 
+        if getattr(self, "active_dbus_session_id", None):
+            self.dbus_service.emit_session_cancelled(self.active_dbus_session_id)
+            self.active_dbus_session_id = None
+            self.dbus_session_options = {}
+
         self.bubble.hide()
         self.state = "IDLE"
         self.voice_commands.reset_buffer(cooldown=1.5)
@@ -989,6 +1266,21 @@ class DictationDaemon:
         self.tray.update_toggles(self.config.get("auto_send", False), self.config.get("ai_enabled", False))
         self.update_status(self.i18n.t("ready", self.engine.model_size))
         self.export_state()
+        self._start_idle_voice_command_listener()
+        return False
+
+    def reset_state_keep_reservation(self) -> bool:
+        """Reset state to IDLE while keeping external app reservation ARMED."""
+        logging.info("Resetting state to IDLE (keeping external app reservation ARMED)")
+        self.media.resume_media()
+        self.bubble.hide()
+        self.state = "IDLE"
+        self.voice_commands.reset_buffer(cooldown=1.5)
+        self.tray.set_daemon_state("IDLE")
+        self.tray.update_toggles(self.config.get("auto_send", False), self.config.get("ai_enabled", False))
+        app_name = self.reserved_dbus_session.get("app_name", "App") if self.reserved_dbus_session else "App"
+        self.update_status(f"Listo (Reservado para {app_name})")
+        self.export_state(force=True)
         self._start_idle_voice_command_listener()
         return False
 
@@ -1057,13 +1349,37 @@ class DictationDaemon:
             self.action_record()
 
     def action_cancel(self) -> None:
-        """Cancel ongoing recording/processing and discard all audio data."""
-        logging.info(f"Action: Cancel triggered (current state: {self.state})")
+        """Cancel ongoing recording/processing and discard audio, with smart double-cancellation."""
+        logging.info(f"Action: Cancel triggered (current state: {self.state}, reserved: {bool(self.reserved_dbus_session)})")
         if self.gemini_live_engine.is_active():
             threading.Thread(target=self.gemini_live_engine.stop_session, kwargs={"timeout": 0.5}, daemon=True).start()
-        if self.state in ["RECORDING", "PAUSED"]:
+
+        # Case 1: Cancel while actively recording / transcribing / cleaning
+        if self.state in ["RECORDING", "PAUSED", "TRANSCRIBING", "CLEANING"]:
             self.audio.stop_recording()
-        self.reset_state()
+            # If recording for a reserved session, keep reservation ARMED for retry!
+            if self.reserved_dbus_session:
+                sid = self.reserved_dbus_session["session_id"]
+                logging.info(f"Discarding audio for reserved session '{sid}'. Reservation remains ARMED for retry.")
+                self.dbus_service.emit_interim_text(sid, "")
+                self.active_dbus_session_id = None
+                self.reset_state_keep_reservation()
+                return
+
+            self.reset_state()
+            return
+
+        # Case 2: Cancel while IDLE and reservation is armed -> Release the reservation!
+        if self.state == "IDLE" and self.reserved_dbus_session:
+            sid = self.reserved_dbus_session.get("session_id", "")
+            logging.info(f"Cancel pressed in IDLE: Releasing armed reservation for session '{sid}'")
+            self.reserved_dbus_session = None
+            self.active_dbus_session_id = None
+            self.dbus_session_options = {}
+            self.dbus_service.emit_session_cancelled(sid)
+            self.dbus_service.emit_session_reservation_released(sid)
+            self.export_state(force=True)
+            self.show_notification("OpenDictate", "Reserva de dictado cancelada")
 
     def action_send(self) -> None:
         """Finish recording and immediately stop audio capture."""
@@ -1090,7 +1406,7 @@ class DictationDaemon:
         self.config_manager.save_config(self.config)
         if hasattr(self.tray, 'ai_check') and self.tray.ai_check:
             self.tray.ai_check.set_active(new_state)
-        self.export_state()
+        self.export_state(force=True)
         self.show_notification("OpenDictate", self.i18n.t("ai_enabled") if new_state else self.i18n.t("ai_disabled"))
 
     def action_toggle_autosend(self) -> None:
@@ -1100,7 +1416,7 @@ class DictationDaemon:
         self.config_manager.save_config(self.config)
         if hasattr(self.tray, 'auto_send_check') and self.tray.auto_send_check:
             self.tray.auto_send_check.set_active(new_state)
-        self.export_state()
+        self.export_state(force=True)
         self.show_notification("OpenDictate", self.i18n.t("autosend_enabled") if new_state else self.i18n.t("autosend_disabled"))
 
     def action_toggle_realtime(self) -> None:
@@ -1108,7 +1424,7 @@ class DictationDaemon:
         new_state = not self.config.get("realtime_mode", True)
         self.config["realtime_mode"] = new_state
         self.config_manager.save_config(self.config)
-        self.export_state()
+        self.export_state(force=True)
         self.show_notification("OpenDictate", self.i18n.t("realtime_enabled") if new_state else self.i18n.t("realtime_disabled"))
 
     def action_toggle_bubble(self) -> None:
@@ -1116,7 +1432,7 @@ class DictationDaemon:
         new_state = not self.config.get("hide_bubble", False)
         self.config["hide_bubble"] = new_state
         self.config_manager.save_config(self.config)
-        self.export_state()
+        self.export_state(force=True)
         if new_state:
             self.bubble.hide()
         self.show_notification("OpenDictate", self.i18n.t("bubble_hidden") if new_state else self.i18n.t("bubble_visible"))
@@ -1151,7 +1467,16 @@ class DictationDaemon:
         self.export_state()
 
     def open_config_window(self) -> None:
-        """Instantiate and present the GTK settings and preferences window."""
+        """Instantiate and present the settings window."""
+        is_omarchy = os.path.exists(os.path.expanduser("~/.config/omarchy")) or bool(shutil.which("omarchy-shell"))
+        if is_omarchy:
+            try:
+                res = subprocess.run(["omarchy-shell", "opendictate", "openSettings"], capture_output=True, timeout=1)
+                if res.returncode == 0:
+                    return
+            except Exception as e:
+                logging.debug(f"Could not open QML settings dialog via omarchy-shell: {e}")
+
         if self.config_window:
             self.config_window.update_ui_from_config(self.config)
             self.config_window.present()
@@ -1275,11 +1600,15 @@ class DictationDaemon:
             if self.engine.model is not None:
                 self.engine.unload_model()
             if self.state == "IDLE":
-                self.export_state()
+                self.export_state(force=True)
         elif stt_backend == "local_whisper":
             if self.engine.model is None or old_model != new_model or backend_changed:
                 if self.state == "IDLE":
                     self.load_model_async(new_model)
+            else:
+                self.export_state(force=True)
+        else:
+            self.export_state(force=True)
 
 
 if __name__ == "__main__":

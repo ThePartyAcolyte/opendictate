@@ -3,7 +3,7 @@ set -e
 
 INSTALL_DIR="$HOME/.local/share/opendictate"
 VENV_DIR="$INSTALL_DIR/.venv"
-OPENDECK_PLUGINS_DIR="$HOME/.config/opendeck/plugins"
+OMARCHY_PLUGINS_DIR="$HOME/.config/omarchy/plugins"
 GNOME_EXT_DIR="$HOME/.local/share/gnome-shell/extensions/com.kirulab.opendictate@kirulab.com"
 
 echo "🚀 Instalando / Actualizando OpenDictate en $INSTALL_DIR..."
@@ -30,13 +30,51 @@ cp -r ui "$INSTALL_DIR/"
 cp -r plugins "$INSTALL_DIR/"
 cp -r img "$INSTALL_DIR/"
 
-echo "🧩 Desplegando Extensión de GNOME Shell..."
-mkdir -p "$GNOME_EXT_DIR"
-cp -r gnome-extension/com.kirulab.opendictate@kirulab.com/* "$GNOME_EXT_DIR/"
-if command -v gnome-extensions &> /dev/null; then
-    gnome-extensions disable "com.kirulab.opendictate@kirulab.com" 2>/dev/null || true
-    sleep 0.5
-    gnome-extensions enable "com.kirulab.opendictate@kirulab.com" 2>/dev/null || true
+if [ -d "$HOME/.local/share/gnome-shell" ] || command -v gnome-shell &> /dev/null; then
+    echo "🧩 Desplegando Extensión de GNOME Shell..."
+    mkdir -p "$GNOME_EXT_DIR"
+    cp -r gnome-extension/com.kirulab.opendictate@kirulab.com/* "$GNOME_EXT_DIR/"
+    if command -v gnome-extensions &> /dev/null; then
+        gnome-extensions disable "com.kirulab.opendictate@kirulab.com" 2>/dev/null || true
+        sleep 0.5
+        gnome-extensions enable "com.kirulab.opendictate@kirulab.com" 2>/dev/null || true
+    fi
+fi
+
+if [ -d "$HOME/.config/omarchy" ]; then
+    echo "🪄 Desplegando Plugin para Omarchy Shell..."
+    mkdir -p "$OMARCHY_PLUGINS_DIR/com.kirulab.opendictate"
+    rm -rf "$OMARCHY_PLUGINS_DIR/com.kirulab.opendictate"/*
+    cp -r plugins/omarchy/opendictate/* "$OMARCHY_PLUGINS_DIR/com.kirulab.opendictate/"
+
+    # Register in ~/.config/omarchy/shell.json if not present
+    python3 - << 'PY_EOF'
+import json, os
+shell_path = os.path.expanduser("~/.config/omarchy/shell.json")
+if os.path.exists(shell_path):
+    try:
+        with open(shell_path, "r") as f:
+            data = json.load(f)
+        bar = data.setdefault("bar", {}).setdefault("layout", {})
+        exists = any(
+            isinstance(item, dict) and item.get("id") == "com.kirulab.opendictate"
+            for sec in ["left", "center", "right"]
+            for item in bar.get(sec, [])
+        )
+        if not exists:
+            # Insert at the beginning of the right section by default
+            right = bar.setdefault("right", [])
+            right.insert(0, {"id": "com.kirulab.opendictate"})
+            with open(shell_path, "w") as f:
+                json.dump(data, f, indent=2)
+            print("  ✔ Widget com.kirulab.opendictate añadido a ~/.config/omarchy/shell.json")
+    except Exception as e:
+        print(f"  Advertencia: No se pudo auto-configurar shell.json: {e}")
+PY_EOF
+
+    if command -v omarchy-shell &> /dev/null; then
+        omarchy-shell shell rescanPlugins 2>/dev/null || true
+    fi
 fi
 
 if [ -d "$HOME/.config/opendeck" ]; then
@@ -56,12 +94,13 @@ if [ ! -d "$VENV_DIR" ] || [ ! -f "$VENV_DIR/bin/python" ]; then
         export PATH="$HOME/.cargo/bin:$PATH"
     fi
     uv venv --system-site-packages --python /usr/bin/python3 "$VENV_DIR"
-    uv pip install faster-whisper google-genai pycairo keyring --python "$VENV_DIR"
+fi
 
-    if command -v nvidia-smi &> /dev/null || (command -v lspci &> /dev/null && lspci | grep -iq nvidia); then
-        echo "⚡ Tarjeta NVIDIA detectada. Instalando librerías de aceleración CUDA (cuBLAS / cuDNN)..."
-        uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 --python "$VENV_DIR" || true
-    fi
+uv pip install faster-whisper google-genai pycairo keyring textual numpy --python "$VENV_DIR"
+
+if command -v nvidia-smi &> /dev/null || (command -v lspci &> /dev/null && lspci | grep -iq nvidia); then
+    echo "⚡ Tarjeta NVIDIA detectada. Instalando librerías de aceleración CUDA (cuBLAS / cuDNN)..."
+    uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 --python "$VENV_DIR" || true
 fi
 
 echo "🔧 Configurando permisos y shebangs..."
@@ -111,9 +150,15 @@ else
     echo "⚠️ Advertencia: No se pudo verificar el demonio tras el inicio."
 fi
 
+if [ -d "$HOME/.config/omarchy" ] && command -v omarchy-restart-shell &> /dev/null; then
+    echo "🔄 Reiniciando shell de Omarchy..."
+    omarchy-restart-shell || true
+fi
+
 echo "✅ Instalación y despliegue completados exitosamente."
 echo ""
 echo "Comandos disponibles:"
 echo "  opendictate --toggle-record-send    (Alternar grabación / envío)"
 echo "  opendictate --settings              (Abrir panel de Ajustes)"
 echo "  opendictate --wizard                (Abrir Asistente Inicial)"
+

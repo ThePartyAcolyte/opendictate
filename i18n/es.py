@@ -156,6 +156,7 @@ STRINGS = {
 
     "lbl_indicator_mode": "Modo de Integración en Escritorio:",
     "indicator_mode_auto": "Automático (Extensión en GNOME, Bandeja en otros)",
+    "indicator_mode_omarchy": "Plugin de Barra Omarchy (com.kirulab.opendictate)",
     "indicator_mode_gnome": "Extensión de Barra Superior de GNOME Shell",
     "indicator_mode_tray": "Ícono en la Bandeja del Sistema (AppIndicator)",
     "indicator_mode_none": "Ninguno (Solo atajos de teclado / OpenDeck)",

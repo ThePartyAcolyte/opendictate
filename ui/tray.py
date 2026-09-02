@@ -71,10 +71,13 @@ class TrayManager:
 
     def build_menu(self) -> None:
         """Construct or refresh the GTK system tray menu items and bindings."""
-        should_show = (
-            self.config.get("initial_setup_completed", False)
-            and self.config.get("use_appindicator", False)
-        )
+        is_omarchy = os.path.exists(os.path.expanduser("~/.config/omarchy/plugins/com.kirulab.opendictate"))
+        indicator_mode = self.config.get("indicator_mode", "auto")
+
+        if is_omarchy or indicator_mode in ("omarchy", "gnome_ext") or not self.config.get("use_appindicator", False):
+            should_show = False
+        else:
+            should_show = self.config.get("initial_setup_completed", False)
 
         if not should_show:
             if self.indicator:

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "com.kirulab.opendictate",
+  "name": "OpenDictate",
+  "version": "1.0.0",
+  "author": "KiruLab",
+  "license": "MIT",
+  "description": "Voice dictation with local Whisper and Gemini AI in the Omarchy bar.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "OpenDictate",
+    "description": "Voice dictation indicator, live sound wave, timer and quick controls.",
+    "category": "AI",
+    "aliases": ["opendictate", "dictate", "whisper"],
+    "allowMultiple": false
+  }
+}

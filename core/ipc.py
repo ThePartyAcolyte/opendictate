@@ -51,12 +51,20 @@ class IPCServer:
                 if not data:
                     continue
 
-                logging.info(f"Received socket command: {data}")
+                logging.info(f"Received socket command: {data[:60]}...")
                 handler = self.command_handlers.get(data)
                 if handler:
                     handler()
                 else:
-                    logging.warning(f"Unknown IPC command: {data}")
+                    handled = False
+                    for prefix, p_handler in self.command_handlers.items():
+                        if prefix.endswith(":") and data.startswith(prefix):
+                            payload = data[len(prefix):]
+                            p_handler(payload)
+                            handled = True
+                            break
+                    if not handled:
+                        logging.warning(f"Unknown IPC command: {data[:60]}")
             except Exception as e:
                 if self.running:
                     logging.error(f"IPC Socket error: {e}")

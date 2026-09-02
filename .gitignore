@@ -2,9 +2,11 @@
 __pycache__/
 .agents/
 build_deb/
+build_arch/
 .venv/
 venv/
 *.deb
+*.pkg.tar.zst
 *.pyc
 .vscode/
 AGENTS.md

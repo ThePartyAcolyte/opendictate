@@ -156,6 +156,7 @@ STRINGS = {
 
     "lbl_indicator_mode": "Desktop Integration Mode:",
     "indicator_mode_auto": "Auto (GNOME Extension in GNOME, Tray otherwise)",
+    "indicator_mode_omarchy": "Omarchy Top Bar Plugin (com.kirulab.opendictate)",
     "indicator_mode_gnome": "GNOME Shell Top Bar Extension",
     "indicator_mode_tray": "System Tray Icon (AppIndicator)",
     "indicator_mode_none": "None (CLI & Hardware shortcuts only)",

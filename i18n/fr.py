@@ -156,6 +156,7 @@ STRINGS = {
 
     "lbl_indicator_mode": "Mode d'intégration au bureau :",
     "indicator_mode_auto": "Automatique (Extension GNOME sous GNOME, barre d'état sinon)",
+    "indicator_mode_omarchy": "Plugin de barre supérieure Omarchy (com.kirulab.opendictate)",
     "indicator_mode_gnome": "Extension de barre supérieure GNOME Shell",
     "indicator_mode_tray": "Icône de la zone de notification (AppIndicator)",
     "indicator_mode_none": "Aucun (Raccourcis CLI et matériels uniquement)",

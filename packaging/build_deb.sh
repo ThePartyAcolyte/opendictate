@@ -53,7 +53,12 @@ if [ -f "${PKG_DIR}/opt/opendictate/plugins/com.kirulab.opendictate.sdplugin/man
     sed -i "s/\"Version\": \".*\"/\"Version\": \"${VERSION}\"/" "${PKG_DIR}/opt/opendictate/plugins/com.kirulab.opendictate.sdplugin/manifest.json"
 fi
 
-# 2. Copiar Extensión de GNOME Shell
+# 2. Copiar Plugin de Omarchy Shell
+echo "🪄 Copiando Plugin de Omarchy Shell a /usr/share/omarchy/shell/plugins..."
+mkdir -p "${PKG_DIR}/usr/share/omarchy/shell/plugins/com.kirulab.opendictate"
+cp -r plugins/omarchy/opendictate/* "${PKG_DIR}/usr/share/omarchy/shell/plugins/com.kirulab.opendictate/"
+
+# 3. Copiar Extensión de GNOME Shell
 echo "🧩 Copiando Extensión de GNOME Shell a /usr/share/gnome-shell/extensions..."
 cp -r gnome-extension/com.kirulab.opendictate@kirulab.com/* "${PKG_DIR}/usr/share/gnome-shell/extensions/com.kirulab.opendictate@kirulab.com/"
 
@@ -180,11 +185,20 @@ fi
 RM_EOF
 chmod 755 "${PKG_DIR}/DEBIAN/postrm"
 
-# 8. Empaquetar con dpkg-deb
-echo "🔨 Generando paquete .deb con dpkg-deb..."
-dpkg-deb --build --root-owner-group "$PKG_DIR"
-
+# 8. Empaquetar con dpkg-deb o ar/tar
 DEB_FILE="${BUILD_DIR}/${PKG_NAME}_${VERSION}_${ARCH}.deb"
+if command -v dpkg-deb &> /dev/null; then
+    echo "🔨 Generando paquete .deb con dpkg-deb..."
+    dpkg-deb --build --root-owner-group "$PKG_DIR" "$DEB_FILE"
+else
+    echo "🔨 Generando paquete .deb con ar y tar (fallback sin dpkg-deb)..."
+    echo "2.0" > "${BUILD_DIR}/debian-binary"
+    (cd "${PKG_DIR}/DEBIAN" && tar --owner=0 --group=0 --numeric-owner -czf "${BUILD_DIR}/control.tar.gz" ./*)
+    (cd "${PKG_DIR}" && tar --owner=0 --group=0 --numeric-owner --exclude="DEBIAN" -czf "${BUILD_DIR}/data.tar.gz" ./*)
+    (cd "${BUILD_DIR}" && ar rcs "${DEB_FILE}" debian-binary control.tar.gz data.tar.gz)
+    rm -f "${BUILD_DIR}/debian-binary" "${BUILD_DIR}/control.tar.gz" "${BUILD_DIR}/data.tar.gz"
+fi
+
 echo "🎉 Paquete creado exitosamente: ${DEB_FILE}"
 echo ""
 echo "Para instalarlo en cualquier sistema Ubuntu/Debian ejecuta:"

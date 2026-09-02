@@ -538,13 +538,18 @@ class ConfigWindow(Gtk.Window):
 
         from core.hardware import detect_desktop_environment
         _, is_gnome = detect_desktop_environment()
+        is_omarchy = os.path.exists(os.path.expanduser("~/.config/omarchy")) or bool(shutil.which("omarchy-shell"))
 
         self.indicator_combo = Gtk.ComboBoxText()
         self.indicator_combo.append("auto", self.i18n.t("indicator_mode_auto"))
+        if is_omarchy or os.path.exists(os.path.expanduser("~/.config/omarchy")):
+            self.indicator_combo.append("omarchy", self.i18n.t("indicator_mode_omarchy"))
         if is_gnome:
             self.indicator_combo.append("gnome_ext", self.i18n.t("indicator_mode_gnome"))
         else:
             self.indicator_combo.append("gnome_ext", f"{self.i18n.t('indicator_mode_gnome')} ({self.i18n.t('indicator_gnome_unavailable')})")
+        if not is_omarchy:
+            self.indicator_combo.append("omarchy", self.i18n.t("indicator_mode_omarchy"))
         self.indicator_combo.append("tray", self.i18n.t("indicator_mode_tray"))
         self.indicator_combo.append("none", self.i18n.t("indicator_mode_none"))
 

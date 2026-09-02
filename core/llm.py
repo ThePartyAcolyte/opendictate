@@ -37,7 +37,8 @@ class LLMService:
         text: str,
         config: Dict[str, Any],
         app_class: str,
-        on_chunk: Optional[Callable[[str], None]] = None
+        on_chunk: Optional[Callable[[str], None]] = None,
+        custom_prompt: Optional[str] = None
     ) -> str:
         """Process dictated text using Gemini API with contextual prompts and vision input.
 
@@ -46,6 +47,7 @@ class LLMService:
             config: Current configuration dictionary.
             app_class: Target window class name.
             on_chunk: Optional callback for streaming tokens to UI.
+            custom_prompt: Optional prompt override (e.g. from D-Bus capture session).
 
         Returns:
             Cleaned and formatted text string.
@@ -70,7 +72,7 @@ class LLMService:
                 http_options={'timeout': timeout_ms}
             )
 
-            base_prompt = config.get("base_system_prompt", DEFAULT_BASE_PROMPT)
+            base_prompt = custom_prompt if custom_prompt else config.get("base_system_prompt", DEFAULT_BASE_PROMPT)
             prompt_parts = [base_prompt]
 
             # Fetch App Profile and Vision config
@@ -81,17 +83,14 @@ class LLMService:
             if enable_vision:
                 shot_path = "/tmp/dictate_vision.png"
                 try:
-                    res = subprocess.run(["wl-paste", "-t", "image/png"], capture_output=True)
-                    if res.returncode == 0 and len(res.stdout) > 0:
-                        with open(shot_path, "wb") as f:
-                            f.write(res.stdout)
-
+                    from core.window_utils import capture_active_window_screenshot
+                    if capture_active_window_screenshot(shot_path):
                         my_file = client.files.upload(file=shot_path)
-                        prompt_parts.append("Below is a context image (screenshot or image copied to clipboard):")
+                        prompt_parts.append("Below is a context image of the active application window:")
                         prompt_parts.append(my_file)
-                        logging.info("Clipboard image attached successfully to LLM prompt.")
+                        logging.info("Context screenshot attached successfully to LLM prompt.")
                 except Exception as e:
-                    logging.error(f"Error attaching clipboard image for vision: {e}")
+                    logging.error(f"Error capturing or attaching window screenshot for vision: {e}")
 
             # Fetch recent dictation history
             history_rows = self.config_manager.get_recent_history(app_class, limit=3)

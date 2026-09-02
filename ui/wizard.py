@@ -211,11 +211,14 @@ class FirstRunWizard(Gtk.Window):
         for child in self.get_children():
             self.remove(child)
 
+        self.current_step = 0
+        self.total_steps = 7
+
         self.main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.add(self.main_vbox)
 
         # ---------------------------------------------------------
-        # Header
+        # Header (Logo, Title, Steps Progress)
         # ---------------------------------------------------------
         self.header_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         self.header_box.get_style_context().add_class("wizard-header")
@@ -236,7 +239,6 @@ class FirstRunWizard(Gtk.Window):
             self.i18n.t("wizard_step_language"),
             self.i18n.t("wizard_step_hardware"),
             self.i18n.t("wizard_step_integration"),
-            self.i18n.t("wizard_step_voice_commands"),
             self.i18n.t("wizard_step_ai"),
             self.i18n.t("wizard_step_shortcuts"),
             self.i18n.t("wizard_step_bubble"),
@@ -259,15 +261,14 @@ class FirstRunWizard(Gtk.Window):
         self.stack.set_transition_duration(200)
         self.main_vbox.pack_start(self.stack, True, True, 0)
 
-        # Build 8 Pages in logical re-ordered flow
+        # Build 7 Pages in logical re-ordered flow
         self._build_page_language()        # Step 0
         self._build_page_hardware()        # Step 1
         self._build_page_integration()     # Step 2
-        self._build_page_voice_commands()  # Step 3
-        self._build_page_ai()              # Step 4
-        self._build_page_shortcuts()       # Step 5
-        self._build_page_bubble()          # Step 6
-        self._build_page_finish()          # Step 7
+        self._build_page_ai()              # Step 3
+        self._build_page_shortcuts()       # Step 4
+        self._build_page_bubble()          # Step 5
+        self._build_page_finish()          # Step 6
 
         # ---------------------------------------------------------
         # Footer
@@ -475,18 +476,28 @@ class FirstRunWizard(Gtk.Window):
         desc.set_line_wrap(True)
         card_integ.pack_start(desc, False, False, 0)
 
-        # Binary Radio Group
-        self.radio_gnome = Gtk.RadioButton.new_with_label(None, self.i18n.t("wizard_radio_gnome"))
-        self.radio_tray = Gtk.RadioButton.new_with_label_from_widget(
-            self.radio_gnome, self.i18n.t("wizard_radio_tray")
-        )
+        # Desktop Integration Radio Group
+        is_omarchy = os.path.exists(os.path.expanduser("~/.config/omarchy")) or bool(shutil.which("omarchy-shell"))
+        self.radio_omarchy = None
 
-        if self.is_gnome:
-            self.radio_gnome.set_active(True)
-        else:
+        if is_omarchy:
+            self.radio_omarchy = Gtk.RadioButton.new_with_label(None, "Plugin de Barra Omarchy (com.kirulab.opendictate - Recomendado)")
+            self.radio_gnome = Gtk.RadioButton.new_with_label_from_widget(self.radio_omarchy, self.i18n.t("wizard_radio_gnome"))
+            self.radio_tray = Gtk.RadioButton.new_with_label_from_widget(self.radio_omarchy, self.i18n.t("wizard_radio_tray"))
+            self.radio_omarchy.set_active(True)
             self.radio_gnome.set_sensitive(False)
-            self.radio_gnome.set_label(self.i18n.t("wizard_gnome_disabled_note"))
-            self.radio_tray.set_active(True)
+            card_integ.pack_start(self.radio_omarchy, False, False, 4)
+        else:
+            self.radio_gnome = Gtk.RadioButton.new_with_label(None, self.i18n.t("wizard_radio_gnome"))
+            self.radio_tray = Gtk.RadioButton.new_with_label_from_widget(
+                self.radio_gnome, self.i18n.t("wizard_radio_tray")
+            )
+            if self.is_gnome:
+                self.radio_gnome.set_active(True)
+            else:
+                self.radio_gnome.set_sensitive(False)
+                self.radio_gnome.set_label(self.i18n.t("wizard_gnome_disabled_note"))
+                self.radio_tray.set_active(True)
 
         card_integ.pack_start(self.radio_gnome, False, False, 4)
         card_integ.pack_start(self.radio_tray, False, False, 4)
@@ -1316,16 +1327,29 @@ class FirstRunWizard(Gtk.Window):
             self.config["whisper_model_size"] = selected_model
 
         # Save Desktop Integration
-        if hasattr(self, 'radio_gnome') and self.radio_gnome.get_active():
+        if hasattr(self, 'radio_omarchy') and self.radio_omarchy and self.radio_omarchy.get_active():
+            self.config["indicator_mode"] = "omarchy"
+            self.config["use_gnome_ext"] = False
+            self.config["use_appindicator"] = False
+            self.config["hide_bubble"] = True
+        elif hasattr(self, 'radio_gnome') and self.radio_gnome.get_active():
             self.config["indicator_mode"] = "gnome_ext"
             self.config["use_gnome_ext"] = True
             self.config["use_appindicator"] = False
-            subprocess.Popen(["gnome-extensions", "enable", "com.kirulab.opendictate@kirulab.com"])
+            if shutil.which("gnome-extensions"):
+                try:
+                    subprocess.Popen(["gnome-extensions", "enable", "com.kirulab.opendictate@kirulab.com"])
+                except Exception:
+                    pass
         else:
             self.config["indicator_mode"] = "tray"
             self.config["use_gnome_ext"] = False
             self.config["use_appindicator"] = True
-            subprocess.Popen(["gnome-extensions", "disable", "com.kirulab.opendictate@kirulab.com"])
+            if shutil.which("gnome-extensions"):
+                try:
+                    subprocess.Popen(["gnome-extensions", "disable", "com.kirulab.opendictate@kirulab.com"])
+                except Exception:
+                    pass
 
         # Save Bubble Mode & Text Collapse State
         if self.selected_bubble_mode == "text":

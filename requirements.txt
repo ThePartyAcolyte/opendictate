@@ -3,4 +3,6 @@ google-genai>=2.20.0
 pycairo
 keyring
 numpy
+textual
+
 

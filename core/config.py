@@ -310,6 +310,59 @@ class ConfigManager:
             logging.error(f"Error fetching app profile for {app_class}: {e}")
         return None, False
 
+    def get_all_app_profiles(self) -> List[Dict[str, Any]]:
+        """Fetch all application profiles from SQLite.
+
+        Returns:
+            List of dicts with app_class, system_prompt, enable_vision.
+        """
+        profiles = []
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT app_class, system_prompt, enable_vision FROM app_profiles ORDER BY app_class ASC")
+                for row in cursor.fetchall():
+                    profiles.append({
+                        "app_class": row[0],
+                        "system_prompt": row[1] or "",
+                        "enable_vision": bool(row[2])
+                    })
+        except Exception as e:
+            logging.error(f"Error fetching all app profiles: {e}")
+        return profiles
+
+    def save_app_profile(self, app_class: str, system_prompt: str, enable_vision: bool) -> bool:
+        """Insert or update an application profile in SQLite."""
+        if not app_class or not app_class.strip():
+            return False
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "INSERT INTO app_profiles (app_class, system_prompt, enable_vision) VALUES (?, ?, ?) "
+                    "ON CONFLICT(app_class) DO UPDATE SET system_prompt = excluded.system_prompt, enable_vision = excluded.enable_vision",
+                    (app_class.strip(), system_prompt, 1 if enable_vision else 0)
+                )
+                conn.commit()
+                return True
+        except Exception as e:
+            logging.error(f"Error saving app profile for {app_class}: {e}")
+            return False
+
+    def delete_app_profile(self, app_class: str) -> bool:
+        """Delete an application profile from SQLite."""
+        if not app_class:
+            return False
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM app_profiles WHERE app_class = ?", (app_class.strip(),))
+                conn.commit()
+                return True
+        except Exception as e:
+            logging.error(f"Error deleting app profile for {app_class}: {e}")
+            return False
+
     def get_recent_history(self, app_class: str, limit: int = 3) -> List[Tuple[Optional[str], Optional[str]]]:
         """Fetch recent dictation entries for contextual LLM prompts.
 

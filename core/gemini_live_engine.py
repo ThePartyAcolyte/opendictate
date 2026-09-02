@@ -95,7 +95,6 @@ class GeminiLiveEngine:
         """Entry point for the dedicated background asyncio event loop thread."""
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
-        self._audio_queue = asyncio.Queue()
         ready_event.set()
 
         try:
@@ -114,7 +113,8 @@ class GeminiLiveEngine:
             logging.info("GeminiLiveEngine event loop terminated.")
 
     async def _session_lifecycle(self, api_key: str, config: Dict[str, Any]) -> None:
-        """Manage connection, audio pump task, and receive stream task."""
+        """Manage WebSocket connection, authentication, and task lifecycles."""
+        self._audio_queue = asyncio.Queue()
         from google import genai
         from google.genai import types
 
