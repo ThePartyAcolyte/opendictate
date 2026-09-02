@@ -49,7 +49,6 @@ Panel {
   readonly property color stateAccentColor: {
     if (isPaused) return Color.urgent
     if (isReserved) return reservedAccentColor
-    if (sttBackend === "gemini_live") return "#5c8fff"
     return Color.accent
   }
 
@@ -184,14 +183,14 @@ Panel {
     NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
   }
 
-  // --- Background Pill Container for Extended State ---
+  // --- Background Boxy Container for Extended State ---
   Rectangle {
     id: barPill
     anchors.fill: parent
     anchors.margins: Style.space(2)
-    radius: Style.cornerRadius > 0 ? Style.cornerRadius : (height / 2)
+    radius: 0
     color: root.isExtended ? Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.08) : "transparent"
-    border.color: root.isExtended ? (root.isPaused ? Color.urgent : (root.sttBackend === "gemini_live" ? "#5c8fff" : Color.accent)) : "transparent"
+    border.color: root.isExtended ? (root.isPaused ? Color.urgent : Color.accent) : "transparent"
     border.width: root.isExtended ? 1 : 0
     visible: root.isExtended
   }
@@ -209,7 +208,7 @@ Panel {
       anchors.fill: parent
       bar: root.bar
       text: root.isOffline ? "󰍭" : "󰍬"
-      foreground: root.isOffline ? Color.muted : (root.isReserved ? root.reservedAccentColor : (root.sttBackend === "gemini_live" ? "#5c8fff" : Color.accent))
+      foreground: root.isOffline ? Color.muted : (root.isReserved ? root.reservedAccentColor : Color.accent)
       tooltipText: root.isOffline 
         ? ("OpenDictate (" + root.t("status_offline") + ")")
         : (root.isReserved 
@@ -303,7 +302,7 @@ Panel {
           ctx.lineTo(width, height / 2)
           ctx.stroke()
 
-          ctx.strokeStyle = root.sttBackend === "gemini_live" ? "#5c8fff" : Color.accent
+          ctx.strokeStyle = root.isReserved ? root.reservedAccentColor : Color.accent
           ctx.lineWidth = 3.0
           ctx.beginPath()
           ctx.moveTo(startX, height / 2)
@@ -319,7 +318,7 @@ Panel {
 
         ctx.fillStyle = root.isPaused 
           ? Color.urgent 
-          : (root.sttBackend === "gemini_live" ? "#5c8fff" : Color.accent)
+          : (root.isReserved ? root.reservedAccentColor : Color.accent)
 
         for (var i = 0; i < count; i++) {
           var val = root.levelHistory[i] || 0.05
