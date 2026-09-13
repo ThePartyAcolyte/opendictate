@@ -66,6 +66,65 @@ def get_active_window_info() -> Tuple[str, str, str]:
         return "unknown", "unknown", ""
 
 
+def is_terminal_window(app_class: str, window_title: str = "", window_address: Optional[str] = None) -> bool:
+    """Determine if a window is a terminal emulator or TUI application.
+
+    Args:
+        app_class: Window class name.
+        window_title: Window title.
+        window_address: Hyprland/Wayland window memory address.
+
+    Returns:
+        True if window is a terminal/TUI, False otherwise.
+    """
+    app_lower = (app_class or "").lower()
+    title_lower = (window_title or "").lower()
+
+    terminal_keywords = [
+        "ghostty", "alacritty", "kitty", "foot", "terminal", "term", "pty",
+        "tui", "herdr", "wezterm", "urxvt", "xterm", "rxvt", "st-256color",
+        "console", "contour", "warp", "tmux", "rio"
+    ]
+
+    if any(k in app_lower for k in terminal_keywords):
+        return True
+
+    if any(k in title_lower for k in ["herdr", "tmux", "terminal", "ghostty"]):
+        return True
+
+    # Hyprland client tags and PID inspection
+    hyprctl_path = shutil.which("hyprctl")
+    if hyprctl_path and window_address:
+        try:
+            res = subprocess.run([hyprctl_path, "clients", "-j"], capture_output=True, text=True, timeout=0.3)
+            if res.returncode == 0 and res.stdout.strip():
+                clients = json.loads(res.stdout)
+                if isinstance(clients, list):
+                    for c in clients:
+                        if c.get("address") == window_address:
+                            init_class = (c.get("initialClass") or "").lower()
+                            init_title = (c.get("initialTitle") or "").lower()
+                            tags = [str(t).lower() for t in c.get("tags", [])]
+                            if any("terminal" in t for t in tags):
+                                return True
+                            if any(k in init_class or k in init_title for k in terminal_keywords):
+                                return True
+                            pid = c.get("pid")
+                            if pid:
+                                try:
+                                    with open(f"/proc/{pid}/comm", "r") as f:
+                                        comm = f.read().strip().lower()
+                                        if any(k in comm for k in terminal_keywords):
+                                            return True
+                                except Exception:
+                                    pass
+                            break
+        except Exception as e:
+            logging.debug(f"is_terminal_window check failed: {e}")
+
+    return False
+
+
 def restore_window_focus(app_class: str, window_title: str, window_address: Optional[str] = None) -> bool:
     """Attempt to restore desktop window focus to specified app class, title, or address.
 
@@ -322,4 +381,100 @@ def get_open_windows_list() -> list:
 
     return windows
 
+
+
+
+def is_herder_window(window_address: Optional[str]) -> bool:
+    """Unequivocally determine if a Hyprland window is running Herder by inspecting its process tree.
+    
+    Args:
+        window_address: Hyprland/Wayland window memory address.
+        
+    Returns:
+        True if herdr is a child process of the window, False otherwise.
+    """
+    import json
+    if not window_address or window_address == "unknown":
+        return False
+        
+    hyprctl_path = shutil.which("hyprctl")
+    if not hyprctl_path:
+        return False
+        
+    try:
+        res = subprocess.run([hyprctl_path, "clients", "-j"], capture_output=True, text=True, timeout=0.3)
+        if res.returncode == 0 and res.stdout.strip():
+            clients = json.loads(res.stdout)
+            for c in clients:
+                if c.get("address") == window_address:
+                    pid = c.get("pid")
+                    if pid:
+                        # Check the process tree of this specific window for 'herdr'
+                        pstree_res = subprocess.run(["pstree", "-T", "-p", str(pid)], capture_output=True, text=True, timeout=0.2)
+                        if pstree_res.returncode == 0 and "herdr" in pstree_res.stdout:
+                            return True
+                    break
+    except Exception as e:
+        logging.debug(f"is_herder_window check failed: {e}")
+        
+    return False
+
+
+def get_herder_context() -> Tuple[Optional[str], Optional[str]]:
+    """Retrieve the active Herder tab and workspace.
+    
+    Queries the herdr socket via 'herdr api snapshot' to always get the 
+    current active tab instead of relying on stale daemon environment variables.
+    
+    Returns:
+        Tuple of (tab_id, workspace_id).
+    """
+    import json
+    
+    # Query herdr api snapshot
+    herdr_path = shutil.which("herdr")
+    if herdr_path:
+        try:
+            res = subprocess.run([herdr_path, "api", "snapshot"], capture_output=True, text=True, timeout=0.5)
+            if res.returncode == 0 and res.stdout.strip():
+                data = json.loads(res.stdout)
+                snapshot = data.get("result", {}).get("snapshot", {})
+                tab_id = snapshot.get("focused_tab_id")
+                ws_id = snapshot.get("focused_workspace_id")
+                if tab_id and ws_id:
+                    return tab_id, ws_id
+        except Exception as e:
+            logging.debug(f"herdr api snapshot failed: {e}")
+            
+    return None, None
+
+
+def restore_herder_tab_focus(tab_id: str, workspace_id: str) -> bool:
+    """Attempt to restore focus to a specific Herder tab and workspace.
+    
+    Args:
+        tab_id: Herder tab ID.
+        workspace_id: Herder workspace ID.
+        
+    Returns:
+        True if focus commands were executed successfully, False otherwise.
+    """
+    herdr_path = shutil.which("herdr")
+    if not herdr_path or not tab_id or not workspace_id:
+        return False
+        
+    try:
+        # 1. Focus workspace (if it's different it will switch)
+        res_ws = subprocess.run([herdr_path, "workspace", "focus", workspace_id], capture_output=True, timeout=0.5)
+        
+        # 2. Focus exact tab
+        res_tab = subprocess.run([herdr_path, "tab", "focus", tab_id], capture_output=True, timeout=0.5)
+        
+        if res_tab.returncode == 0:
+            logging.info(f"Restored Herder context: workspace='{workspace_id}', tab='{tab_id}'")
+            return True
+    except Exception as e:
+        logging.error(f"Error restoring Herder tab focus: {e}")
+        
+    return False
 

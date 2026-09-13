@@ -53,7 +53,15 @@ from core.voice_commands import VoiceCommandManager
 from core.audio_concurrency import is_microphone_in_use_by_other_apps
 from core.ipc import IPCServer, SOCKET_PATH
 from core.dbus_service import OpenDictateDBusService
-from core.window_utils import get_active_window_info, restore_window_focus, get_open_windows_list
+from core.window_utils import (
+    get_active_window_info, 
+    restore_window_focus, 
+    get_open_windows_list, 
+    is_terminal_window,
+    is_herder_window,
+    get_herder_context,
+    restore_herder_tab_focus
+)
 from ui.bubble import BubbleWindow
 from ui.tray import TrayManager
 
@@ -715,6 +723,17 @@ class DictationDaemon:
         self._stop_idle_voice_command_listener()
         self.voice_commands.reset_buffer(cooldown=1.5)
         self.current_app_class, self.current_window_title, self.current_window_address = get_active_window_info()
+        
+        # Capture Herder context if running in a Herder window
+        self.current_herder_tab_id = None
+        self.current_herder_workspace_id = None
+        if is_herder_window(self.current_window_address):
+            tab_id, ws_id = get_herder_context()
+            if tab_id and ws_id:
+                self.current_herder_tab_id = tab_id
+                self.current_herder_workspace_id = ws_id
+                logging.info(f"Captured Herder context at recording start: workspace='{ws_id}', tab='{tab_id}'")
+
         self.play_sound("/usr/share/sounds/freedesktop/stereo/audio-volume-change.oga")
         self.media.pause_media(self.config)
 
@@ -1180,25 +1199,53 @@ class DictationDaemon:
         def _do_paste():
             try:
                 if self.config.get("restore_window_focus", False):
+                    # 1. Restore OS window focus
                     restore_window_focus(self.current_app_class, self.current_window_title, getattr(self, "current_window_address", None))
                     time.sleep(0.15)
+                    
+                    # 2. Restore exact Herder tab if context was captured
+                    tab_id = getattr(self, "current_herder_tab_id", None)
+                    ws_id = getattr(self, "current_herder_workspace_id", None)
+                    if tab_id and ws_id:
+                        restore_herder_tab_focus(tab_id, ws_id)
+                        time.sleep(0.15)
 
                 wl_copy_path = shutil.which("wl-copy")
                 wtype_path = shutil.which("wtype")
                 ydotool_path = shutil.which("ydotool")
 
+                is_terminal = is_terminal_window(
+                    self.current_app_class,
+                    getattr(self, "current_window_title", ""),
+                    getattr(self, "current_window_address", None)
+                )
+                logging.info(f"Executing paste: target_class='{self.current_app_class}', is_terminal={is_terminal}, auto_send={auto_send}")
+
                 if wl_copy_path:
                     subprocess.run([wl_copy_path], input=full_text, text=True)
                     time.sleep(0.05)
                     if wtype_path:
-                        app_name = (self.current_app_class or "").lower()
-                        is_terminal = any(term in app_name for term in ["ghostty", "alacritty", "kitty", "foot", "terminal", "pty"])
                         if is_terminal:
-                            subprocess.run([wtype_path, "-M", "ctrl", "-M", "shift", "-k", "v", "-m", "shift", "-m", "ctrl"])
+                            logging.info("Sending terminal paste shortcut (Ctrl+Shift+V) via wtype")
+                            subprocess.run([
+                                wtype_path,
+                                "-M", "ctrl", "-s", "20",
+                                "-M", "shift", "-s", "20",
+                                "-k", "v", "-s", "20",
+                                "-m", "shift", "-s", "20",
+                                "-m", "ctrl"
+                            ])
                         else:
-                            subprocess.run([wtype_path, "-M", "ctrl", "-k", "v", "-m", "ctrl"])
+                            logging.info("Sending standard paste shortcut (Ctrl+V) via wtype")
+                            subprocess.run([
+                                wtype_path,
+                                "-M", "ctrl", "-s", "20",
+                                "-k", "v", "-s", "20",
+                                "-m", "ctrl"
+                            ])
                         if auto_send:
-                            time.sleep(0.05)
+                            time.sleep(0.12)
+                            logging.info("Auto-send: emitting Return key via wtype")
                             subprocess.run([wtype_path, "-k", "Return"])
                     elif ydotool_path:
                         subprocess.run([ydotool_path, "key", "29:1", "47:1", "47:0", "29:0"])
@@ -1208,7 +1255,7 @@ class DictationDaemon:
                 elif wtype_path:
                     subprocess.run([wtype_path, full_text])
                     if auto_send:
-                        time.sleep(0.05)
+                        time.sleep(0.12)
                         subprocess.run([wtype_path, "-k", "Return"])
                 elif ydotool_path:
                     subprocess.run([ydotool_path, "type", full_text])

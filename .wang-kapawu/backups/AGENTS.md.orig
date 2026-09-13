@@ -1,0 +1,8 @@
+# Reglas de Trabajo del Proyecto OpenDictate
+
+Al momento de programar o modificar este proyecto, se deben respetar los siguientes lineamientos:
+1. **Rendimiento**: El proceso de grabación y monitoreo de audio (`opendictate-daemon.py`) debe mantenerse ligero y libre de bloqueos. Usa threads o `GLib.idle_add` para cualquier tarea pesada para no congelar la interfaz ni la captura.
+2. **Dependencias**: Si instalas una nueva biblioteca para Python, debes registrarla en el archivo `requirements.txt`.
+3. **Internacionalización (i18n)**: Cualquier nuevo texto que se muestre en la interfaz gráfica, notificaciones o la burbuja flotante, debe ser agregado al archivo `i18n.py` y a los módulos de idioma en `i18n/` en todos los idiomas soportados.
+4. **GTK3**: Todo el desarrollo gráfico está escrito con GTK3 (`gi.repository.Gtk`). No asumas paquetes GTK4.
+5. **Instalación y Despliegue Obligatorio Post-Iteración**: Al final de cada cambio, modificación o iteración de código aprobada, SIEMPRE debes ejecutar automáticamente el script `./install.sh` en el directorio raíz usando la herramienta `run_command` para desplegar los cambios en la instalación local (`~/.local/share/opendictate/`), actualizar los binarios/plugins y reiniciar el daemon, permitiendo que los cambios queden listos para prueba de forma inmediata.

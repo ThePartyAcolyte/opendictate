@@ -58,7 +58,9 @@ OpenDictate utilizes a hybrid IPC architecture for maximum flexibility:
 1. **Unix Domain Socket (`/tmp/opendictate.socket`)**: Fast, low-overhead local client commands and GUI triggers.
 2. **D-Bus Interface (`org.kirulab.OpenDictate` on Session Bus)**: Headless external application integration.
 
-### D-Bus Interface Reference
+> 📖 **Full Protocol Specification & Code Recipes**: For comprehensive integration details, multi-app eviction policies, and copy-paste client examples in Python, Bash, and Rust, refer to the [**IPC & D-Bus Communication Protocol Specification**](docs/IPC_PROTOCOL_SPECIFICATION.md).
+
+### D-Bus Interface Quick Reference
 
 | Method | Arguments | Returns | Description |
 |---|---|---|---|
