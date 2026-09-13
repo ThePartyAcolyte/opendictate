@@ -13,6 +13,39 @@ import time
 from typing import Dict, Any, Optional, Callable, List
 
 
+def classify_gemini_error(err: Optional[Exception]) -> str:
+    """Classify exception from Google GenAI / Gemini Live into actionable category.
+
+    Returns:
+        One of: 'QUOTA_EXCEEDED', 'INVALID_API_KEY', 'SERVICE_UNAVAILABLE', 'NETWORK_ERROR', 'UNKNOWN'
+    """
+    if err is None:
+        return "UNKNOWN"
+
+    msg = str(err).lower()
+    code = getattr(err, "code", None)
+    status = getattr(err, "status", "")
+    status_str = str(status).lower()
+
+    # 1. Quota / Rate Limit (429)
+    if code == 429 or "429" in msg or "quota" in msg or "resource_exhausted" in msg or "resourceexhausted" in status_str:
+        return "QUOTA_EXCEEDED"
+
+    # 2. Invalid API Key / Authentication (400 / 401 / 403)
+    if code in [400, 401, 403] or "api_key_invalid" in msg or "permission_denied" in msg or "unauthenticated" in msg or "invalid api key" in msg or "permissiondenied" in status_str:
+        return "INVALID_API_KEY"
+
+    # 3. Google Service Unavailable / Internal Server Error (500, 502, 503, 504)
+    if code in [500, 502, 503, 504] or "unavailable" in msg or "503" in msg or "server error" in msg:
+        return "SERVICE_UNAVAILABLE"
+
+    # 4. Network / Connection / DNS / Timeout Error
+    if isinstance(err, (TimeoutError, ConnectionError, OSError)) or "timeout" in msg or "connection" in msg or "gaierror" in msg or "network" in msg or "timed out" in msg:
+        return "NETWORK_ERROR"
+
+    return "UNKNOWN"
+
+
 class GeminiLiveEngine:
     """Manages Live API WebSocket session for real-time PCM audio transcription."""
 
@@ -28,6 +61,7 @@ class GeminiLiveEngine:
         self.on_interim_text: Optional[Callable[[str], None]] = None
         self.on_final_text: Optional[Callable[[str], None]] = None
         self.on_error: Optional[Callable[[Exception], None]] = None
+        self.last_error: Optional[Exception] = None
 
         self.current_model: str = "gemini-3.5-transcribe-live"
         self.current_mode: str = "SMART"
@@ -71,6 +105,7 @@ class GeminiLiveEngine:
             self.on_interim_text = on_interim_text
             self.on_final_text = on_final_text
             self.on_error = on_error
+            self.last_error = None
             self.current_model = config.get("gemini_live_model", "gemini-3.5-transcribe-live")
             self.current_mode = config.get("gemini_live_mode", "SMART")
             self.accumulated_text = ""
@@ -100,6 +135,7 @@ class GeminiLiveEngine:
         try:
             self._loop.run_until_complete(self._session_lifecycle(api_key, config))
         except Exception as e:
+            self.last_error = e
             logging.error(f"GeminiLiveEngine event loop error: {e}", exc_info=True)
             if self.on_error:
                 self.on_error(e)
@@ -162,6 +198,7 @@ class GeminiLiveEngine:
                     receiver_task.cancel()
 
         except Exception as err:
+            self.last_error = err
             logging.error(f"GeminiLiveEngine connection exception: {err}", exc_info=True)
             if self.on_error:
                 self.on_error(err)
@@ -195,6 +232,7 @@ class GeminiLiveEngine:
                     )
                 )
             except Exception as e:
+                self.last_error = e
                 logging.error(f"GeminiLiveEngine send error: {e}")
                 if self.on_error:
                     self.on_error(e)
@@ -234,6 +272,7 @@ class GeminiLiveEngine:
         except asyncio.CancelledError:
             pass
         except Exception as e:
+            self.last_error = e
             logging.error(f"GeminiLiveEngine receive error: {e}")
             if self.on_error:
                 self.on_error(e)

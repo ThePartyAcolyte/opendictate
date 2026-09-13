@@ -20,9 +20,32 @@ if _script_dir not in sys.path:
 from core.ipc import SOCKET_PATH
 
 
+def start_daemon() -> None:
+    """Spawn opendictate-daemon.py detached in background."""
+    daemon_path = os.path.join(_script_dir, "opendictate-daemon.py")
+    if not os.path.exists(daemon_path):
+        daemon_path = os.path.expanduser("~/.local/share/opendictate/opendictate-daemon.py")
+
+    venv_py = os.path.expanduser("~/.local/share/opendictate/.venv/bin/python")
+    py_exec = venv_py if os.path.exists(venv_py) else sys.executable
+
+    args = [py_exec, "-u", daemon_path, "--force-start"]
+    subprocess.Popen(
+        args,
+        start_new_session=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    print("OpenDictate daemon started in background.")
+
+
 def main() -> None:
     """Parse CLI arguments and dispatch command to OpenDictate daemon or open offline windows."""
-    if "--record" in sys.argv or "record" in sys.argv:
+    if "--start" in sys.argv or "start" in sys.argv:
+        cmd = "start"
+    elif "--quit" in sys.argv or "quit" in sys.argv:
+        cmd = "quit"
+    elif "--record" in sys.argv or "record" in sys.argv:
         cmd = "record"
     elif "--pause" in sys.argv or "pause" in sys.argv:
         cmd = "pause"
@@ -158,8 +181,20 @@ X-GNOME-Autostart-enabled=true
     elif "--update" in sys.argv or "update" in sys.argv:
         cmd = "update-dialog"
     else:
-        print("Usage: opendictate [--record|--pause|--cancel|--send|--finish-normal|--finish-ai|--settings|--settings-gtk|--wizard|--wizard-gtk|--check-updates|--update|--toggle-bubble|--toggle-record-send|--toggle-ai|--toggle-autosend|--toggle-realtime|--cycle-model]")
+        print("Usage: opendictate [--start|--quit|--record|--pause|--cancel|--send|--finish-normal|--finish-ai|--settings|--settings-gtk|--wizard|--wizard-gtk|--check-updates|--update|--toggle-bubble|--toggle-record-send|--toggle-ai|--toggle-autosend|--toggle-realtime|--cycle-model]")
         sys.exit(0)
+
+    if cmd == "start":
+        try:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(0.5)
+            s.connect(SOCKET_PATH)
+            s.close()
+            print("OpenDictate daemon is already running.")
+            sys.exit(0)
+        except Exception:
+            start_daemon()
+            sys.exit(0)
 
     try:
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -167,7 +202,14 @@ X-GNOME-Autostart-enabled=true
         s.sendall(cmd.encode('utf-8'))
         s.close()
     except Exception as e:
-        if cmd == "settings":
+        if cmd == "quit":
+            print("OpenDictate daemon is already offline.")
+            sys.exit(0)
+        elif cmd in ("record", "toggle-record-send"):
+            print("OpenDictate daemon is offline. Starting daemon...")
+            start_daemon()
+            sys.exit(0)
+        elif cmd == "settings":
             try:
                 from ui.settings_tui import run_tui
                 run_tui()

@@ -1118,13 +1118,31 @@ class ConfigWindow(Gtk.Window):
         voice_scroll.add(voice_box)
         self.stack.add_titled(voice_scroll, "voice", self.i18n.t("tab_voice_commands"))
 
+        # Banner: Feature in development
+        banner_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        banner_box.get_style_context().add_class("card")
+        banner_box.set_margin_top(4)
+        banner_box.set_margin_bottom(8)
+        banner_box.set_margin_left(4)
+        banner_box.set_margin_right(4)
+
+        banner_title = Gtk.Label(label=f"<b>{self.i18n.t('voice_experimental_title')}</b>", xalign=0)
+        banner_title.set_use_markup(True)
+        banner_desc = Gtk.Label(label=self.i18n.t("voice_experimental_desc"), xalign=0)
+        banner_desc.set_line_wrap(True)
+        banner_desc.get_style_context().add_class("dim-label")
+
+        banner_box.pack_start(banner_title, False, False, 4)
+        banner_box.pack_start(banner_desc, False, False, 0)
+        voice_box.pack_start(banner_box, False, False, 0)
+
         # Card 1: Voice Commands & Wake Word
         card_voice, list_voice = self._create_card(self.i18n.t("group_voice_commands"))
 
         self.voice_enable_switch = Gtk.Switch()
-        self.voice_enable_switch.set_active(self.config.get("voice_commands_enabled", False))
-        self.voice_enable_switch.connect("notify::active", self._on_voice_enable_toggled)
-        list_voice.add(self._create_switch_row(self.i18n.t("lbl_voice_commands_enabled"), self.voice_enable_switch))
+        self.voice_enable_switch.set_active(False)
+        self.voice_enable_switch.set_sensitive(False)
+        list_voice.add(self._create_switch_row(f"{self.i18n.t('lbl_voice_commands_enabled')} ({self.i18n.t('opt_disabled_dev')})", self.voice_enable_switch))
 
         self.voice_thresh_scale = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0.50, 0.90, 0.01)
         self.voice_thresh_scale.set_value(float(self.config.get("voice_command_threshold", 0.70)))
@@ -1148,8 +1166,10 @@ class ConfigWindow(Gtk.Window):
         self.vad_thresh_scale.connect("value-changed", self._on_vad_thresh_changed)
         list_voice.add(self._create_control_row(self.i18n.t("lbl_voice_vad_threshold"), self.vad_thresh_scale))
 
+        floor_lbl = self.i18n.t("lbl_noise_floor_floor")
+        thresh_lbl = self.i18n.t("lbl_noise_floor_threshold")
         self.vad_calib_lbl = Gtk.Label(
-            label=f"Piso: {self.config.get('voice_vad_noise_floor', 0.030):.3f} | Umbral: {self.config.get('voice_vad_threshold', 0.075):.3f}",
+            label=f"{floor_lbl}: {self.config.get('voice_vad_noise_floor', 0.030):.3f} | {thresh_lbl}: {self.config.get('voice_vad_threshold', 0.075):.3f}",
             xalign=0
         )
         self.vad_calib_lbl.get_style_context().add_class("dim-label")

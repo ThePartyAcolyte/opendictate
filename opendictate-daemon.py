@@ -44,7 +44,7 @@ from i18n import get_translator
 from core.config import ConfigManager, CONFIG_PATH, is_api_available
 from core.audio import AudioRecorder
 from core.engine import WhisperEngine
-from core.gemini_live_engine import GeminiLiveEngine
+from core.gemini_live_engine import GeminiLiveEngine, classify_gemini_error
 from core.vad import VADStreamSegmenter
 from core.llm import LLMService
 from core.mpris import MediaController
@@ -189,7 +189,7 @@ class DictationDaemon:
 
         # Initial model load
         backend = self.config.get("stt_backend", "local_whisper")
-        if backend == "gemini_live" and self.config.get("api_key"):
+        if backend == "gemini_live":
             logging.info("STT backend is Gemini Live. Skipping local Faster-Whisper model load to save RAM.")
             self.state = "IDLE"
             self.export_state()
@@ -205,7 +205,7 @@ class DictationDaemon:
     # Notification & Sound Helpers
     # -------------------------------------------------------------------------
     def show_notification(self, title: str, message: str, timeout: int = 1500) -> None:
-        """Dispatch desktop notification using libnotify/notify-send.
+        """Dispatch desktop notification using omarchy-notification-send or libnotify/notify-send.
 
         Args:
             title: Notification title string.
@@ -215,12 +215,47 @@ class DictationDaemon:
         if not self.config.get("show_notifications", True):
             return
         try:
-            subprocess.Popen([
+            omarchy_notify = shutil.which("omarchy-notification-send")
+            if not omarchy_notify and os.path.exists("/usr/share/omarchy/bin/omarchy-notification-send"):
+                omarchy_notify = "/usr/share/omarchy/bin/omarchy-notification-send"
+
+            if omarchy_notify:
+                cmd = [
+                    omarchy_notify,
+                    "--app-name", "omarchy-action",
+                    "-g", "🎙️",
+                    "-t", str(timeout),
+                    title,
+                    message,
+                ]
+                subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_candidates = [
+                os.path.join(base_dir, "img", "logo.png"),
+                os.path.join(base_dir, "assets", "logo.png"),
+                os.path.expanduser("~/.local/share/opendictate/img/logo.png"),
+                "audio-input-microphone",
+            ]
+            icon_arg = None
+            for cand in icon_candidates:
+                if cand.startswith("/") and os.path.exists(cand):
+                    icon_arg = cand
+                    break
+                elif not cand.startswith("/"):
+                    icon_arg = cand
+
+            cmd = [
                 "notify-send",
+                "-a", "OpenDictate",
                 "-h", "string:x-canonical-private-synchronous:dictate",
                 "-t", str(timeout),
-                title, message
-            ])
+            ]
+            if icon_arg:
+                cmd.extend(["-i", icon_arg])
+            cmd.extend([title, message])
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
             logging.error(f"Error dispatching system notification: {e}")
 
@@ -483,7 +518,8 @@ class DictationDaemon:
             logging.error(f"Error handling set-json IPC command: {e}")
 
     def quit_app(self) -> None:
-        """Export OFFLINE state telemetry and exit GTK main loop."""
+        """Export OFFLINE state telemetry, clean up resources, and exit process cleanly."""
+        logging.info("Shutting down OpenDictate daemon...")
         try:
             state_data = {
                 "state": "OFFLINE",
@@ -496,7 +532,22 @@ class DictationDaemon:
             os.replace(tmp_path, "/tmp/opendictate_state.json")
         except Exception as e:
             logging.debug(f"Error exporting OFFLINE state: {e}")
+
+        try:
+            if hasattr(self, "engine") and self.engine:
+                self.engine.unload_model()
+            if hasattr(self, "ipc_server") and self.ipc_server:
+                self.ipc_server.stop()
+            if hasattr(self, "dbus_service") and self.dbus_service:
+                self.dbus_service.stop()
+            if hasattr(self, "audio") and self.audio:
+                self.audio.stop_recording()
+            self._stop_idle_voice_command_listener()
+        except Exception as e:
+            logging.debug(f"Error cleaning up daemon resources on quit: {e}")
+
         Gtk.main_quit()
+        os._exit(0)
 
     # -------------------------------------------------------------------------
     # Model Loading
@@ -507,12 +558,25 @@ class DictationDaemon:
         Args:
             size: Model size identifier string (e.g. 'tiny', 'base', 'small', 'medium').
         """
+        backend = self.config.get("stt_backend", "local_whisper")
+        if backend == "gemini_live":
+            logging.info("Skipping load_model_async because STT backend is gemini_live.")
+            self.reset_state()
+            return
+
         self.state = "LOADING"
         self.update_status(self.i18n.t("loading_model_param", size=size))
         self.export_state()
 
         def _loader():
             success, loaded_size, status_code = self.engine.load_model(size, self.config)
+            current_backend = self.config.get("stt_backend", "local_whisper")
+            if current_backend == "gemini_live":
+                logging.info("Backend changed to gemini_live during loading. Unloading model.")
+                self.engine.unload_model()
+                GLib.idle_add(self.reset_state)
+                return
+
             if success and loaded_size:
                 self.config["whisper_model_size"] = loaded_size
                 self.config_manager.save_config(self.config)
@@ -964,8 +1028,45 @@ class DictationDaemon:
 
         threading.Thread(target=self._final_transcribe_loop, daemon=True).start()
 
+    def _transcribe_audio_cloud_sync(self, audio_bytes: bytes) -> str:
+        """Transcribe raw PCM 16kHz audio bytes using Gemini API (REST) for fast cloud fallback."""
+        api_key = self.config.get("api_key", "").strip()
+        if not api_key or not audio_bytes:
+            return ""
+
+        import io
+        import wave
+        from google import genai
+        from google.genai import types
+
+        wav_io = io.BytesIO()
+        with wave.open(wav_io, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(audio_bytes)
+        wav_data = wav_io.getvalue()
+
+        model_name = self.config.get("gemini_live_model", "gemini-2.5-flash")
+        if "live" in model_name:
+            model_name = "gemini-2.5-flash"
+
+        client = genai.Client(api_key=api_key, http_options={'timeout': 10000})
+        prompt = (
+            "Transcribe the following speech audio accurately and verbatim in its spoken language. "
+            "Return ONLY the transcribed speech text without comments, markdown, or greetings."
+        )
+        response = client.models.generate_content(
+            model=model_name,
+            contents=[
+                types.Part.from_bytes(data=wav_data, mime_type="audio/wav"),
+                prompt
+            ]
+        )
+        return (response.text or "").strip()
+
     def _final_transcribe_loop(self) -> None:
-        """Execute final transcription pass (full-batch or remaining audio tail)."""
+        """Execute final transcription pass with Speculative Dual Execution & Error Diagnostics."""
         if hasattr(self, 'streaming_thread') and self.streaming_thread and self.streaming_thread.is_alive():
             logging.info("Waiting for streaming loop to finish current chunk...")
             self.streaming_thread.join()
@@ -975,10 +1076,104 @@ class DictationDaemon:
             current_audio_time = len(self.audio.audio_buffer) / bytes_per_sec
 
             with self.transcribe_lock:
-                if self.config.get("stt_backend", "local_whisper") == "gemini_live" and self.gemini_live_engine.is_active():
-                    live_text = self.gemini_live_engine.stop_session(timeout=3.5)
-                    if live_text:
+                if self.config.get("stt_backend", "local_whisper") == "gemini_live":
+                    live_text = ""
+                    if self.gemini_live_engine.is_active():
+                        live_text = self.gemini_live_engine.stop_session(timeout=3.0)
+
+                    if live_text and not self.gemini_live_engine.last_error:
                         self.confirmed_text = live_text
+                    else:
+                        chunk_bytes = bytes(self.audio.audio_buffer)
+                        if len(chunk_bytes) % 2 != 0:
+                            chunk_bytes = chunk_bytes[:-1]
+
+                        if len(chunk_bytes) >= 9600:
+                            err_type = classify_gemini_error(self.gemini_live_engine.last_error)
+                            logging.warning(f"Gemini Live session failed/empty (error_type={err_type}). Initiating dual fallback/retry...")
+
+                            if err_type in ["QUOTA_EXCEEDED", "INVALID_API_KEY"]:
+                                if err_type == "QUOTA_EXCEEDED":
+                                    self.show_notification("OpenDictate", self.i18n.t("toast_error_quota_exceeded"), timeout=5000)
+                                else:
+                                    self.show_notification("OpenDictate", self.i18n.t("toast_error_invalid_key"), timeout=5000)
+
+                                self.config["stt_backend"] = "local_whisper"
+                                self.config_manager.save_config(self.config)
+                                self.export_state(force=True)
+
+                                if self.engine.model is None:
+                                    self.engine.load_model(self.config.get("whisper_model_size", "medium"), self.config)
+                                audio_int16 = np.frombuffer(chunk_bytes, dtype=np.int16)
+                                audio_float32 = audio_int16.astype(np.float32) / 32768.0
+                                segments, _ = self.engine.transcribe_chunk(audio_float32, self.config)
+                                self.confirmed_text = "".join(seg.text for seg in segments).strip()
+                            else:
+                                self.show_notification("OpenDictate", self.i18n.t("toast_gemini_retrying_dual"), timeout=2500)
+                                cloud_res = [None]
+                                local_res = [None]
+                                cloud_err = [None]
+                                stop_event = threading.Event()
+
+                                def _cloud_task():
+                                    try:
+                                        res = self._transcribe_audio_cloud_sync(chunk_bytes)
+                                        if res and not stop_event.is_set():
+                                            cloud_res[0] = res
+                                    except Exception as e:
+                                        cloud_err[0] = e
+
+                                def _local_task():
+                                    try:
+                                        if self.engine.model is None:
+                                            self.engine.load_model(self.config.get("whisper_model_size", "medium"), self.config)
+                                        if stop_event.is_set():
+                                            return
+                                        audio_int16 = np.frombuffer(chunk_bytes, dtype=np.int16)
+                                        audio_float32 = audio_int16.astype(np.float32) / 32768.0
+                                        segments, _ = self.engine.transcribe_chunk(audio_float32, self.config)
+                                        res = "".join(seg.text for seg in segments).strip()
+                                        if not stop_event.is_set():
+                                            local_res[0] = res
+                                    except Exception as e:
+                                        logging.error(f"Local fallback task error: {e}", exc_info=True)
+
+                                th_cloud = threading.Thread(target=_cloud_task, daemon=True)
+                                th_local = threading.Thread(target=_local_task, daemon=True)
+                                th_cloud.start()
+                                th_local.start()
+
+                                while th_cloud.is_alive() or th_local.is_alive():
+                                    if cloud_res[0]:
+                                        stop_event.set()
+                                        break
+                                    if not th_local.is_alive() and (local_res[0] is not None or not th_cloud.is_alive()):
+                                        stop_event.set()
+                                        break
+                                    time.sleep(0.05)
+
+                                if cloud_res[0]:
+                                    logging.info("Speculative Dual Race: Gemini Cloud won.")
+                                    self.confirmed_text = cloud_res[0]
+                                    self.engine.unload_model()
+                                    self.show_notification("OpenDictate", self.i18n.t("toast_gemini_recovered_cloud"), timeout=2500)
+                                elif local_res[0]:
+                                    logging.info("Speculative Dual Race: Local Whisper finished (Cloud failed or slow).")
+                                    self.confirmed_text = local_res[0]
+                                    final_err_type = classify_gemini_error(cloud_err[0] or self.gemini_live_engine.last_error)
+                                    self.config["stt_backend"] = "local_whisper"
+                                    self.config_manager.save_config(self.config)
+                                    self.export_state(force=True)
+
+                                    if final_err_type == "SERVICE_UNAVAILABLE":
+                                        self.show_notification("OpenDictate", self.i18n.t("toast_fallback_service_unavailable"), timeout=4500)
+                                    elif final_err_type == "QUOTA_EXCEEDED":
+                                        self.show_notification("OpenDictate", self.i18n.t("toast_error_quota_exceeded"), timeout=4500)
+                                    elif final_err_type == "INVALID_API_KEY":
+                                        self.show_notification("OpenDictate", self.i18n.t("toast_error_invalid_key"), timeout=4500)
+                                    else:
+                                        self.show_notification("OpenDictate", self.i18n.t("toast_fallback_network_error"), timeout=4500)
+
                 elif not self.config.get("realtime_mode", True):
                     logging.info("Executing full audio batch transcription...")
                     chunk_bytes = bytes(self.audio.audio_buffer)
@@ -1643,10 +1838,12 @@ class DictationDaemon:
         )
 
         stt_backend = self.config.get("stt_backend", "local_whisper")
-        if stt_backend == "gemini_live" and self.config.get("api_key"):
+        if stt_backend == "gemini_live":
             if self.engine.model is not None:
                 self.engine.unload_model()
-            if self.state == "IDLE":
+            if self.state in ["IDLE", "LOADING"]:
+                self.reset_state()
+            else:
                 self.export_state(force=True)
         elif stt_backend == "local_whisper":
             if self.engine.model is None or old_model != new_model or backend_changed:

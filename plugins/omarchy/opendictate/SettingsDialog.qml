@@ -175,7 +175,7 @@ PanelWindow {
     anchors.centerIn: parent
     width: Math.min(Style.space(980), parent.width - Style.space(40))
     height: Math.min(Style.space(720), parent.height - Style.space(40))
-    radius: Style.cornerRadius > 0 ? Style.cornerRadius : 12
+    radius: Style.cornerRadius
     color: Color.background
     border.color: Color.popups.border
     border.width: 1
@@ -236,7 +236,7 @@ PanelWindow {
             visible: root.toastMessage !== ""
             implicitWidth: toastLabel.implicitWidth + Style.space(16)
             implicitHeight: 28
-            radius: 6
+            radius: Math.min(Style.cornerRadius, 6)
             color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.2)
             border.color: Color.accent
             border.width: 1
@@ -256,7 +256,7 @@ PanelWindow {
           Rectangle {
             implicitWidth: escText.implicitWidth + Style.space(14)
             implicitHeight: 26
-            radius: 4
+            radius: Math.min(Style.cornerRadius, 4)
             color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.06)
             border.color: Color.popups.border
             border.width: 1
@@ -514,7 +514,7 @@ PanelWindow {
                 Rectangle {
                   Layout.fillWidth: true
                   implicitHeight: 64
-                  radius: 8
+                  radius: Math.min(Style.cornerRadius, 8)
                   color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.05)
                   border.color: Color.popups.border
                   border.width: 1
@@ -535,7 +535,7 @@ PanelWindow {
                     Rectangle {
                       Layout.fillWidth: true
                       height: 34
-                      radius: 6
+                      radius: Math.min(Style.cornerRadius, 6)
                       color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.08)
                       border.color: Color.popups.border
                       border.width: 1
@@ -666,7 +666,7 @@ PanelWindow {
                 Rectangle {
                   Layout.fillWidth: true
                   implicitHeight: 90
-                  radius: 6
+                  radius: Math.min(Style.cornerRadius, 6)
                   color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.06)
                   border.color: Color.popups.border
                   border.width: 1
@@ -802,7 +802,7 @@ PanelWindow {
                 Rectangle {
                   Layout.fillWidth: true
                   implicitHeight: profileCol.implicitHeight + Style.space(20)
-                  radius: 8
+                  radius: Math.min(Style.cornerRadius, 8)
                   color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.05)
                   border.color: Color.popups.border
                   border.width: 1
@@ -828,7 +828,7 @@ PanelWindow {
                       Rectangle {
                         Layout.fillWidth: true
                         height: 32
-                        radius: 4
+                        radius: Math.min(Style.cornerRadius, 4)
                         color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.08)
                         border.color: Color.popups.border
                         border.width: 1
@@ -865,7 +865,7 @@ PanelWindow {
                     Rectangle {
                       Layout.fillWidth: true
                       implicitHeight: 90
-                      radius: 6
+                      radius: Math.min(Style.cornerRadius, 6)
                       color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.06)
                       border.color: Color.popups.border
                       border.width: 1
@@ -1352,17 +1352,17 @@ PanelWindow {
 
                 Repeater {
                   model: [
-                    { id: "tiny", name: "Whisper Tiny (39 MB)", desc: "Ultrarrápido, consumo mínimo de RAM (~500 MB). Ideal para hardware modesto." },
-                    { id: "base", name: "Whisper Base (74 MB)", desc: "Muy rápido, buena precisión para dictado diario (~800 MB RAM)." },
-                    { id: "small", name: "Whisper Small (244 MB)", desc: "Excelente balance velocidad/precisión. Muy recomendado (~1.5 GB RAM)." },
-                    { id: "medium", name: "Whisper Medium (769 MB)", desc: "Alta precisión gramatical y técnica. Ideal para español (~3 GB RAM)." },
-                    { id: "large-v3", name: "Whisper Large-v3 (1.5 GB)", desc: "Máxima precisión absoluta. Requiere GPU potente (~6 GB VRAM)." }
+                    { id: "tiny", name: "Whisper Tiny (39 MB)", descKey: "desc_model_tiny" },
+                    { id: "base", name: "Whisper Base (74 MB)", descKey: "desc_model_base" },
+                    { id: "small", name: "Whisper Small (244 MB)", descKey: "desc_model_small" },
+                    { id: "medium", name: "Whisper Medium (769 MB)", descKey: "desc_model_medium" },
+                    { id: "large-v3", name: "Whisper Large-v3 (1.5 GB)", descKey: "desc_model_large_v3" }
                   ]
 
                   Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: 56
-                    radius: 8
+                    radius: Math.min(Style.cornerRadius, 8)
                     color: root.cfgValue("whisper_model_size", "medium") === modelData.id
                       ? Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.15)
                       : Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.05)
@@ -1387,7 +1387,7 @@ PanelWindow {
                         }
 
                         Text {
-                          text: modelData.desc
+                          text: root.t(modelData.descKey)
                           font.family: Style.font.family
                           font.pixelSize: Style.font.caption
                           color: Color.muted
@@ -1416,14 +1416,50 @@ PanelWindow {
                 Layout.fillWidth: true
                 spacing: Style.space(10)
 
+                // Experimental Warning Banner
+                Rectangle {
+                  Layout.fillWidth: true
+                  implicitHeight: bannerCol.implicitHeight + Style.space(20)
+                  radius: Math.min(Style.cornerRadius, 8)
+                  color: Qt.rgba(1.0, 0.75, 0.0, 0.12)
+                  border.color: Qt.rgba(1.0, 0.75, 0.0, 0.5)
+                  border.width: 1
+
+                  ColumnLayout {
+                    id: bannerCol
+                    anchors.fill: parent
+                    anchors.margins: Style.space(12)
+                    spacing: Style.space(4)
+
+                    Text {
+                      Layout.fillWidth: true
+                      text: root.t("voice_experimental_title")
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.body
+                      font.bold: true
+                      color: Qt.rgba(1.0, 0.8, 0.2, 1.0)
+                    }
+
+                    Text {
+                      Layout.fillWidth: true
+                      text: root.t("voice_experimental_desc")
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.caption
+                      color: Color.foreground
+                      wrapMode: Text.Wrap
+                    }
+                  }
+                }
+
                 PanelSectionHeader { text: root.t("sec_voice_triggers") }
 
                 Toggle {
                   Layout.fillWidth: true
-                  label: root.t("lbl_voice_commands")
+                  label: root.t("lbl_voice_commands") + " (" + root.t("opt_disabled_dev") + ")"
                   description: root.t("desc_voice_commands")
-                  checked: root.cfgBool("voice_commands_enabled", false)
-                  onClicked: root.toggleConfig("voice_commands_enabled")
+                  checked: false
+                  enabled: false
+                  opacity: 0.5
                 }
 
                 // Voice Command Match Threshold Slider
@@ -1502,7 +1538,7 @@ PanelWindow {
                 Rectangle {
                   Layout.fillWidth: true
                   implicitHeight: 46
-                  radius: 6
+                  radius: Math.min(Style.cornerRadius, 6)
                   color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.05)
                   border.color: Color.popups.border
                   border.width: 1
@@ -1514,7 +1550,7 @@ PanelWindow {
 
                     Text {
                       Layout.fillWidth: true
-                      text: root.t("lbl_noise_floor_status") + " | Piso: " + Number(root.cfgNum("voice_vad_noise_floor", 0.030)).toFixed(3) + " / Umbral: " + Number(root.cfgNum("voice_vad_threshold", 0.075)).toFixed(3)
+                      text: root.t("lbl_noise_floor_status") + " | " + root.t("lbl_noise_floor_floor") + ": " + Number(root.cfgNum("voice_vad_noise_floor", 0.030)).toFixed(3) + " / " + root.t("lbl_noise_floor_threshold") + ": " + Number(root.cfgNum("voice_vad_threshold", 0.075)).toFixed(3)
                       font.family: Style.font.family
                       font.pixelSize: Style.font.caption
                       color: Color.muted
@@ -1524,7 +1560,7 @@ PanelWindow {
                       text: root.t("btn_calibrate_noise")
                       onClicked: {
                         Quickshell.execDetached(["opendictate", "--calibrate-noise"])
-                        root.showToast("Calibrando ruido de fondo...")
+                        root.showToast(root.t("toast_calibrating_noise"))
                       }
                     }
                   }
@@ -1539,7 +1575,7 @@ PanelWindow {
                   Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: 48
-                    radius: 6
+                    radius: Math.min(Style.cornerRadius, 6)
                     color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.04)
 
                     RowLayout {
@@ -1557,7 +1593,7 @@ PanelWindow {
 
                       Text {
                         Layout.fillWidth: true
-                        text: (modelData.phrases && modelData.phrases.length > 0) ? ("Frases: \"" + modelData.phrases.join("\", \"") + "\"") : "Sin frases"
+                        text: (modelData.phrases && modelData.phrases.length > 0) ? (root.t("lbl_phrases_count") + "\"" + modelData.phrases.join("\", \"") + "\"") : root.t("lbl_no_phrases")
                         font.family: Style.font.family
                         font.pixelSize: Style.font.caption
                         color: Color.muted
@@ -1594,7 +1630,7 @@ PanelWindow {
                     text: root.t("btn_calibrate_aec")
                     onClicked: {
                       Quickshell.execDetached(["opendictate", "--calibrate-aec"])
-                      root.showToast("Calibrando filtro AEC...")
+                      root.showToast(root.t("toast_calibrating_aec"))
                     }
                   }
                 }
@@ -1612,20 +1648,20 @@ PanelWindow {
 
                 Repeater {
                   model: [
-                    { cmd: "opendictate --toggle-record-send", desc: "Alternar Grabación / Envío (Atajo principal)" },
-                    { cmd: "opendictate --record", desc: "Iniciar grabación o reanudar pausa" },
-                    { cmd: "opendictate --pause", desc: "Pausar la grabación actual" },
-                    { cmd: "opendictate --send", desc: "Finalizar y enviar transcripción inmediatamente" },
-                    { cmd: "opendictate --cancel", desc: "Cancelar y descartar la grabación en curso" },
-                    { cmd: "opendictate --toggle-ai", desc: "Conmutar procesamiento con IA (On / Off)" },
-                    { cmd: "opendictate --toggle-autosend", desc: "Conmutar envío automático con Enter" },
-                    { cmd: "opendictate --settings", desc: "Abrir este panel de Ajustes en pantalla" }
+                    { cmd: "opendictate --toggle-record-send", descKey: "desc_cmd_toggle_record_send" },
+                    { cmd: "opendictate --record", descKey: "desc_cmd_record" },
+                    { cmd: "opendictate --pause", descKey: "desc_cmd_pause" },
+                    { cmd: "opendictate --send", descKey: "desc_cmd_send" },
+                    { cmd: "opendictate --cancel", descKey: "desc_cmd_cancel" },
+                    { cmd: "opendictate --toggle-ai", descKey: "desc_cmd_toggle_ai" },
+                    { cmd: "opendictate --toggle-autosend", descKey: "desc_cmd_toggle_autosend" },
+                    { cmd: "opendictate --settings", descKey: "desc_cmd_settings" }
                   ]
 
                   Rectangle {
                     Layout.fillWidth: true
                     implicitHeight: 46
-                    radius: 6
+                    radius: Math.min(Style.cornerRadius, 6)
                     color: Qt.rgba(Color.foreground.r, Color.foreground.g, Color.foreground.b, 0.05)
 
                     RowLayout {
@@ -1643,7 +1679,7 @@ PanelWindow {
 
                       Text {
                         Layout.fillWidth: true
-                        text: modelData.desc
+                        text: root.t(modelData.descKey)
                         font.family: Style.font.family
                         font.pixelSize: Style.font.caption
                         color: Color.muted
@@ -1664,7 +1700,7 @@ PanelWindow {
                 Rectangle {
                   Layout.fillWidth: true
                   implicitHeight: 46
-                  radius: 6
+                  radius: Math.min(Style.cornerRadius, 6)
                   color: Qt.rgba(Color.accent.r, Color.accent.g, Color.accent.b, 0.1)
                   border.color: Color.accent
                   border.width: 1
@@ -1685,7 +1721,7 @@ PanelWindow {
 
                     Button {
                       text: root.t("btn_copy_config")
-                      onClicked: root.copyText("bind = SUPER, D, exec, opendictate --toggle-record-send", "Regla Hyprland")
+                      onClicked: root.copyText("bind = SUPER, D, exec, opendictate --toggle-record-send", root.t("lbl_hyprland_rule"))
                     }
                   }
                 }

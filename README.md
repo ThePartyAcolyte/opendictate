@@ -31,23 +31,27 @@ All audio capture, Voice Activity Detection (VAD), and speech-to-text inference 
 ## 🚀 Key Features
 
 * **100% Local Voice Recognition**: Powered by localized Whisper models running on CPU/CUDA via `faster-whisper`.
-* **Adaptive VAD Dynamic Chunking**: Intelligent real-time voice activity detection that segments audio during natural conversational pauses (`0.6s` default), with continuous ambient noise floor tracking, retroactive boundary search, and energy-valley fallback to eliminate word truncation and hallucinations.
+* **Speculative Dual Execution & Adaptive Fallback**: Competitive race architecture ensuring zero audio loss. If network latency or API interruptions occur during cloud dictation, OpenDictate processes the entire recorded buffer locally while retrying in the cloud, picking the fastest result and notifying the user.
+* **Transparent API Error Diagnostics**: Context-aware desktop alerts distinguishing API quota exhaustion (`429`), invalid credentials (`403`), Google server outages (`503`), and network timeouts.
+* **Gemini Live Ultra-Low Latency STT**: Bidirectional streaming STT via Google Gemini Live API (`gemini-3.5-transcribe-live`) with real-time speculative interim hypotheses and SMART semantic punctation.
+* **Zero-RAM Footprint with Cloud STT**: Automatically unloads Faster-Whisper neural models from memory when using Gemini Live, reducing idle RAM consumption to <100 MB.
 * **Omarchy Shell Native Plugin (Quickshell / QML)**:
   * Top bar status widget with live audio level waveforms and pulse animations.
   * Bar position configuration (Left, Center, Right) directly from settings.
-  * Visual badge and accent customization when dictation is reserved for external apps.
-  * Comprehensive modal Settings dialog with backdrop click protection.
+  * Native desktop toasts using `omarchy-notification-send` with Do-Not-Disturb (DND) bypass.
+  * Dynamic corner radius synchronization matching Hyprland's `decoration:rounding`.
+  * Clean single-button offline startup popup.
+* **Adaptive VAD Dynamic Chunking**: Intelligent real-time voice activity detection that segments audio during natural conversational pauses (`0.6s` default), with continuous ambient noise floor tracking, retroactive boundary search, and energy-valley fallback.
 * **Headless D-Bus Session API (`org.kirulab.OpenDictate`)**:
   * Seamless integration for 3rd-party applications without focus stealing or clipboard hijacking.
   * **Dictation Reservation (`ReserveCaptureSession`)**: External apps can queue the next dictation with custom accent colors and application names.
-  * **Multi-App Eviction & Client UUIDs**: Clean displacement and cancellation signaling (`SessionCancelled`, `SessionReservationReleased`) when new client requests arrive.
+  * **Multi-App Eviction & Client UUIDs**: Clean displacement and cancellation signaling (`SessionCancelled`, `SessionReservationReleased`).
   * **Smart Double-Cancellation**: Cancelling mid-recording discards corrupted audio while keeping the active app reservation armed for an immediate retry.
-* **Alternative Cloud STT (Gemini Live)**: Bidirectional streaming STT via Google Gemini Live API (`gemini-3.5-transcribe-live`) with real-time speculative interim hypotheses and SMART semantic punctation.
 * **Per-App AI Profiles**: Configure custom System Prompts and vision context tailored to specific window classes (e.g. Markdown for Obsidian, Bash commands for terminal emulators).
-* **Smart Window Focus Restoration (Hyprland & Wayland)**: Restores the exact prior window focus via Hyprland Lua socket dispatch before pasting, preventing cross-app paste errors during multitasking.
+* **Smart Window Focus Restoration (Hyprland & Wayland)**: Restores the exact prior window focus (and Herder workspace/tab contexts) via Hyprland socket dispatch before pasting.
 * **Smart Media Control**: Automatically hooks into MPRIS via D-Bus to pause media players (Spotify, VLC, YouTube) when you speak, and resumes playback upon completion.
 * **OpenDeck & Stream Deck Hardware Integration**: Native OpenDeck plugin with physical button controls and dynamic feedback.
-* **Full Multi-Language Localization (`i18n`)**: English (`en`), Spanish (`es`), German (`de`), and French (`fr`).
+* **Full Multi-Language Localization (`i18n`)**: 100% complete string coverage for English (`en`), Spanish (`es`), German (`de`), and French (`fr`).
 
 ---
 
@@ -87,12 +91,12 @@ OpenDictate utilizes a hybrid IPC architecture for maximum flexibility:
 ### Arch Linux / Omarchy Package (`.pkg.tar.zst`)
 Download the latest `.pkg.tar.zst` from Releases and install via `pacman`:
 ```bash
-sudo pacman -U opendictate-1.2.0.nightly.20260902-1-any.pkg.tar.zst
+sudo pacman -U opendictate-1.2.0-1-any.pkg.tar.zst
 ```
 
 ### Ubuntu / Debian Package (`.deb`) *(Maintenance Mode)*
 ```bash
-sudo dpkg -i opendictate_1.2.0-nightly.20260902_all.deb || sudo apt-get install -f -y
+sudo dpkg -i opendictate_1.2.0_all.deb || sudo apt-get install -f -y
 ```
 
 ### Local User Installation (Development / Source)

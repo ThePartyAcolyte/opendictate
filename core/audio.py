@@ -5,6 +5,7 @@ Manages ALSA recording process (arecord), RMS audio level normalization,
 and raw 16kHz 16-bit mono PCM buffer streaming.
 """
 
+import os
 import math
 import signal
 import struct

@@ -104,7 +104,7 @@ Panel {
   }
 
   function ensureDaemonRunning() {
-    Quickshell.execDetached(["opendictate", "--record"])
+    Quickshell.execDetached(["opendictate", "--start"])
   }
 
   FileView {
@@ -440,94 +440,120 @@ Panel {
           }
         }
 
-        PanelSeparator { width: parent.width }
-
-        // Quick Switches Section
-        PanelSectionHeader {
-          text: root.t("quick_settings")
-        }
-
-        Toggle {
-          width: parent.width
-          label: root.t("lbl_ai_enabled")
-          description: root.t("desc_ai_enabled")
-          checked: root.aiEnabled
-          onClicked: root.sendCommand("toggle-ai")
-        }
-
-        Toggle {
-          width: parent.width
-          label: root.t("lbl_auto_send")
-          description: root.t("desc_auto_send")
-          checked: root.autosendEnabled
-          onClicked: root.sendCommand("toggle-autosend")
-        }
-
-        Toggle {
-          width: parent.width
-          label: root.t("lbl_realtime_mode")
-          description: root.t("desc_realtime_mode")
-          checked: root.realtimeEnabled
-          onClicked: root.sendCommand("toggle-realtime")
-        }
-
-        Toggle {
-          width: parent.width
-          label: root.t("lbl_auto_pause")
-          description: root.t("desc_auto_pause")
-          checked: root.pauseMedia
-          onClicked: root.toggleConfig("auto_pause_media")
-        }
-
-        PanelSeparator { width: parent.width }
-
-        // STT Engine Selector
-        PanelSectionHeader {
-          text: root.t("stt_engine")
-        }
-
-        Row {
+        // OFFLINE MODE: Only Start Button
+        Column {
           width: parent.width
           spacing: Style.space(8)
+          visible: root.isOffline
+
+          PanelSeparator { width: parent.width }
 
           Button {
-            width: (parent.width - Style.space(8)) / 2
-            text: "Local"
-            selected: root.sttBackend !== "gemini_live"
-            onClicked: root.updateConfig("stt_backend", "local_whisper")
-          }
-
-          Button {
-            width: (parent.width - Style.space(8)) / 2
-            text: "Gemini"
-            selected: root.sttBackend === "gemini_live"
-            onClicked: root.updateConfig("stt_backend", "gemini_live")
-          }
-        }
-
-        PanelSeparator { width: parent.width }
-
-        // Footer Actions: Settings & Quit
-        Row {
-          width: parent.width
-          spacing: Style.space(8)
-
-          Button {
-            width: (parent.width - Style.space(8)) / 2
-            text: root.t("btn_settings")
+            width: parent.width
+            text: root.t("btn_start")
+            foreground: Color.accent
             onClicked: {
               root.close()
-              settingsDialog.open = true
+              root.ensureDaemonRunning()
+            }
+          }
+        }
+
+        // ONLINE MODE: Quick Settings, STT Selector, Settings and Quit
+        Column {
+          width: parent.width
+          spacing: Style.space(8)
+          visible: !root.isOffline
+
+          PanelSeparator { width: parent.width }
+
+          // Quick Switches Section
+          PanelSectionHeader {
+            text: root.t("quick_settings")
+          }
+
+          Toggle {
+            width: parent.width
+            label: root.t("lbl_ai_enabled")
+            description: root.t("desc_ai_enabled")
+            checked: root.aiEnabled
+            onClicked: root.sendCommand("toggle-ai")
+          }
+
+          Toggle {
+            width: parent.width
+            label: root.t("lbl_auto_send")
+            description: root.t("desc_auto_send")
+            checked: root.autosendEnabled
+            onClicked: root.sendCommand("toggle-autosend")
+          }
+
+          Toggle {
+            width: parent.width
+            label: root.t("lbl_realtime_mode")
+            description: root.t("desc_realtime_mode")
+            checked: root.realtimeEnabled
+            onClicked: root.sendCommand("toggle-realtime")
+          }
+
+          Toggle {
+            width: parent.width
+            label: root.t("lbl_auto_pause")
+            description: root.t("desc_auto_pause")
+            checked: root.pauseMedia
+            onClicked: root.toggleConfig("auto_pause_media")
+          }
+
+          PanelSeparator { width: parent.width }
+
+          // STT Engine Selector
+          PanelSectionHeader {
+            text: root.t("stt_engine")
+          }
+
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Button {
+              width: (parent.width - Style.space(8)) / 2
+              text: "Local"
+              selected: root.sttBackend !== "gemini_live"
+              onClicked: root.updateConfig("stt_backend", "local_whisper")
+            }
+
+            Button {
+              width: (parent.width - Style.space(8)) / 2
+              text: "Gemini"
+              selected: root.sttBackend === "gemini_live"
+              onClicked: root.updateConfig("stt_backend", "gemini_live")
             }
           }
 
-          Button {
-            width: (parent.width - Style.space(8)) / 2
-            text: root.t("btn_quit")
-            foreground: Color.urgent
-            onClicked: {
-              root.close()
-              root.sendCommand("quit")
+          PanelSeparator { width: parent.width }
+
+          // Footer Actions: Settings & Quit
+          Row {
+            width: parent.width
+            spacing: Style.space(8)
+
+            Button {
+              width: (parent.width - Style.space(8)) / 2
+              text: root.t("btn_settings")
+              onClicked: {
+                root.close()
+                settingsDialog.open = true
+              }
+            }
+
+            Button {
+              width: (parent.width - Style.space(8)) / 2
+              text: root.t("btn_quit")
+              foreground: Color.urgent
+              onClicked: {
+                root.close()
+                root.sendCommand("quit")
+              }
             }
           }
         }

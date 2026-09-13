@@ -144,9 +144,16 @@ class WhisperEngine:
         with self.lock:
             if self.model is not None:
                 logging.info(f"Unloading Faster-Whisper model '{self.model_size}' from memory...")
+                del self.model
                 self.model = None
                 import gc
                 gc.collect()
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
 
     def transcribe_chunk(
         self,
