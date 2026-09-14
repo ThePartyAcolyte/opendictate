@@ -490,14 +490,6 @@ Panel {
 
           Toggle {
             width: parent.width
-            label: root.t("lbl_realtime_mode")
-            description: root.t("desc_realtime_mode")
-            checked: root.realtimeEnabled
-            onClicked: root.sendCommand("toggle-realtime")
-          }
-
-          Toggle {
-            width: parent.width
             label: root.t("lbl_auto_pause")
             description: root.t("desc_auto_pause")
             checked: root.pauseMedia

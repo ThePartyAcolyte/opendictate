@@ -41,7 +41,6 @@ cp opendictate-daemon.py "${PKG_DIR}/opt/opendictate/"
 cp opendictate-client.py "${PKG_DIR}/opt/opendictate/"
 cp opendictate_config_ui.py "${PKG_DIR}/opt/opendictate/"
 cp launch_wizard.py "${PKG_DIR}/opt/opendictate/"
-cp i18n.py "${PKG_DIR}/opt/opendictate/"
 cp -r i18n "${PKG_DIR}/opt/opendictate/"
 cp -r core "${PKG_DIR}/opt/opendictate/"
 cp -r ui "${PKG_DIR}/opt/opendictate/"
@@ -143,14 +142,14 @@ fi
 
 if command -v uv &> /dev/null; then
     uv venv --system-site-packages --python /usr/bin/python3 "$VENV_DIR" || true
-    uv pip install faster-whisper google-genai pycairo keyring --python "$VENV_DIR" || true
+    uv pip install faster-whisper google-genai pycairo keyring textual numpy websockets Pillow --python "$VENV_DIR" || true
     if command -v nvidia-smi &> /dev/null || (command -v lspci &> /dev/null && lspci | grep -iq nvidia); then
         echo "⚡ Tarjeta NVIDIA detectada. Instalando librerías de aceleración CUDA..."
         uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 --python "$VENV_DIR" || true
     fi
 else
     python3 -m venv --system-site-packages "$VENV_DIR" || true
-    "$VENV_DIR/bin/pip" install faster-whisper google-genai pycairo keyring || true
+    "$VENV_DIR/bin/pip" install faster-whisper google-genai pycairo keyring textual numpy websockets Pillow || true
     if command -v nvidia-smi &> /dev/null || (command -v lspci &> /dev/null && lspci | grep -iq nvidia); then
         echo "⚡ Tarjeta NVIDIA detectada. Instalando librerías de aceleración CUDA..."
         "$VENV_DIR/bin/pip" install nvidia-cublas-cu12 nvidia-cudnn-cu12 || true

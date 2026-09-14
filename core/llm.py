@@ -5,8 +5,6 @@ Uses Google Gemini GenAI SDK to clean, format, and punctuate raw voice dictation
 """
 
 import os
-import time
-import subprocess
 import logging
 from typing import Dict, Any, Optional, Callable
 from core.config import ConfigManager
@@ -81,7 +79,7 @@ class LLMService:
                 prompt_parts.append(f"Specific context for this application ({app_class}): {app_prompt}")
 
             if enable_vision:
-                shot_path = "/tmp/dictate_vision.png"
+                shot_path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "opendictate_vision.png")
                 try:
                     from core.window_utils import capture_active_window_screenshot
                     if capture_active_window_screenshot(shot_path):
@@ -91,6 +89,12 @@ class LLMService:
                         logging.info("Context screenshot attached successfully to LLM prompt.")
                 except Exception as e:
                     logging.error(f"Error capturing or attaching window screenshot for vision: {e}")
+                finally:
+                    try:
+                        if os.path.exists(shot_path):
+                            os.unlink(shot_path)
+                    except Exception:
+                        pass
 
             # Fetch recent dictation history
             history_rows = self.config_manager.get_recent_history(app_class, limit=3)

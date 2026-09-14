@@ -10,18 +10,20 @@ import asyncio
 import websockets
 import subprocess
 import os
-import signal
 import base64
 import time
 import math
 import shutil
+import io
 from PIL import Image, ImageDraw
 import logging
+from logging.handlers import RotatingFileHandler
 
-logging.basicConfig(filename='/tmp/opendictate_plugin.log', level=logging.DEBUG, 
-                    format='%(asctime)s %(levelname)s: %(message)s')
-import io
-import base64
+logging.basicConfig(
+    handlers=[RotatingFileHandler('/tmp/opendictate_plugin.log', maxBytes=2 * 1024 * 1024, backupCount=1)],
+    level=logging.DEBUG, 
+    format='%(asctime)s %(levelname)s: %(message)s'
+)
 
 CLI_BIN = shutil.which("opendictate") or os.path.expanduser("~/.local/bin/opendictate")
 

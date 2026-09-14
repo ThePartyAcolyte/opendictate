@@ -37,7 +37,7 @@ logging.basicConfig(
 
 import gi
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gtk, GLib
 
 import uuid
 from i18n import get_translator
@@ -102,6 +102,12 @@ class DictationDaemon:
         self.total_paused_time: float = 0.0
         self.processing_start_time: float = 0.0
         self._last_state_export_time: float = 0.0
+        self._cache_windows = []
+        self._cache_windows_ts = 0.0
+        self._cache_profiles = []
+        self._cache_profiles_ts = 0.0
+        self._cache_shell = None
+        self._cache_shell_ts = 0.0
         self.timer_id: Optional[int] = None
         self.config_window = None
         self.wizard_window = None
@@ -293,27 +299,43 @@ class DictationDaemon:
         backend = self.config.get("stt_backend", "local_whisper")
         if key == "ready":
             if backend == "gemini_live" and self.config.get("api_key"):
-                status_text = "Listo (Gemini Live)"
+                status_text = self.i18n.t("status_gemini_ready")
             else:
                 status_text = self.i18n.t("ready", self.engine.model_size)
         elif key == "recording" and backend == "gemini_live":
-            status_text = "Grabando (Gemini Live)..."
+            status_text = self.i18n.t("status_gemini_recording")
         else:
             status_text = self.i18n.t(key)
 
         bar_pos = "right"
-        try:
-            shell_p = os.path.expanduser("~/.config/omarchy/shell.json")
-            if os.path.exists(shell_p):
-                with open(shell_p, "r") as f:
-                    s_data = json.load(f)
-                b_layout = s_data.get("bar", {}).get("layout", {})
+        if now - self._cache_shell_ts > 3.0:
+            try:
+                shell_p = os.path.expanduser("~/.config/omarchy/shell.json")
+                if os.path.exists(shell_p):
+                    with open(shell_p, "r") as f:
+                        self._cache_shell = json.load(f)
+                else:
+                    self._cache_shell = None
+            except Exception:
+                self._cache_shell = None
+            self._cache_shell_ts = now
+
+        if self._cache_shell:
+            try:
+                b_layout = self._cache_shell.get("bar", {}).get("layout", {})
                 for section in ["left", "center", "right"]:
                     if any(isinstance(it, dict) and it.get("id") == "com.kirulab.opendictate" for it in b_layout.get(section, [])):
                         bar_pos = section
                         break
-        except Exception:
-            pass
+            except Exception:
+                pass
+
+        if now - self._cache_profiles_ts > 3.0:
+            self._cache_profiles = self.config_manager.get_all_app_profiles()
+            self._cache_profiles_ts = now
+        if now - self._cache_windows_ts > 3.0:
+            self._cache_windows = get_open_windows_list()
+            self._cache_windows_ts = now
 
         state_data = {
             "state": self.state,
@@ -337,8 +359,8 @@ class DictationDaemon:
             "total_paused_time": self.total_paused_time,
             "bar_position": bar_pos,
             "reserved_session": getattr(self, "reserved_dbus_session", None),
-            "app_profiles": self.config_manager.get_all_app_profiles(),
-            "open_windows": get_open_windows_list(),
+            "app_profiles": self._cache_profiles,
+            "open_windows": self._cache_windows,
             "voice_actions": [
                 {"action": "START", "label": self.i18n.t("voice_cmd_start"), "icon": "▶", "phrases": [p.name for p in self.voice_commands.get_phrases_for_action("START")]},
                 {"action": "SEND", "label": self.i18n.t("voice_cmd_send"), "icon": "📤", "phrases": [p.name for p in self.voice_commands.get_phrases_for_action("SEND")]},
@@ -471,7 +493,7 @@ class DictationDaemon:
             if app_class:
                 self.config_manager.save_app_profile(app_class, prompt, vision)
                 self.export_state(force=True)
-                self.show_notification("OpenDictate", f"Perfil '{app_class}' guardado")
+                self.show_notification("OpenDictate", self.i18n.t("notif_profile_saved", app_class=app_class))
         except Exception as e:
             logging.error(f"Error handling save-profile IPC command: {e}")
 
@@ -536,8 +558,8 @@ class DictationDaemon:
         try:
             if hasattr(self, "engine") and self.engine:
                 self.engine.unload_model()
-            if hasattr(self, "ipc_server") and self.ipc_server:
-                self.ipc_server.stop()
+            if hasattr(self, "ipc") and self.ipc:
+                self.ipc.stop()
             if hasattr(self, "dbus_service") and self.dbus_service:
                 self.dbus_service.stop()
             if hasattr(self, "audio") and self.audio:
@@ -861,13 +883,6 @@ class DictationDaemon:
                 if self.gemini_live_engine.is_active():
                     self.gemini_live_engine.send_audio_chunk(new_chunk)
 
-
-    def _streaming_transcriber_loop(self) -> None:
-        """Adaptive VAD-based transcription and silence-gated tail voice command worker loop."""
-        bytes_per_sec = 16000 * 2
-        last_vad_byte_offset = 0
-        last_checked_speech_end = -1.0
-
     def _transcribe_and_accumulate_chunk(self, chunk_start: float, chunk_end: float, bytes_per_sec: int = 32000) -> None:
         """Helper to slice and transcribe a speech chunk with Faster-Whisper."""
         start_idx = int(chunk_start * bytes_per_sec)
@@ -1161,9 +1176,16 @@ class DictationDaemon:
                                     logging.info("Speculative Dual Race: Local Whisper finished (Cloud failed or slow).")
                                     self.confirmed_text = local_res[0]
                                     final_err_type = classify_gemini_error(cloud_err[0] or self.gemini_live_engine.last_error)
-                                    self.config["stt_backend"] = "local_whisper"
-                                    self.config_manager.save_config(self.config)
-                                    self.export_state(force=True)
+
+                                    # Permanent downgrade only for hard, unrecoverable errors.
+                                    # Transient errors (network/service) keep stt_backend as "gemini_live"
+                                    # so the next session automatically retries Gemini Live.
+                                    if final_err_type in ["QUOTA_EXCEEDED", "INVALID_API_KEY"]:
+                                        self.config["stt_backend"] = "local_whisper"
+                                        self.config_manager.save_config(self.config)
+                                        self.export_state(force=True)
+                                    else:
+                                        logging.info(f"Transient error ({final_err_type}): session fell back to local, stt_backend config unchanged.")
 
                                     if final_err_type == "SERVICE_UNAVAILABLE":
                                         self.show_notification("OpenDictate", self.i18n.t("toast_fallback_service_unavailable"), timeout=4500)

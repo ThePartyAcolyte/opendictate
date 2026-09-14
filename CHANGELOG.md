@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-09-14
+
+### Fixed & Refactored (Comprehensive Audit & Hardening)
+- **Critical Crash Fixes**: Resolved `NameError` in `core/config.py` by adding `import time`, fixed `ImportError` in `ui/wizard_tui.py`, fixed `AttributeError` in daemon shutdown, and repaired GTK Wizard empty-step navigation.
+- **Performance & Security**: Optimized `export_state()` JSON serialization by caching window/shell listings, moved IPC socket to `$XDG_RUNTIME_DIR/opendictate.socket`, robustly handled IPC buffer EOF, and eliminated temporary screenshot files after upload.
+- **Packaging & Uninstallation**: Updated `install.sh` and `uninstall.sh` to properly manage OpenDeck plugins (`~/.config/opendeck/plugins/`), handle Omarchy shell integration, and configure Python virtual environments.
+- **Dead Code Cleanup**: Deleted legacy patch scripts, unhooked dead voice command wizard UI methods, removed duplicate transcriber loops, and cleaned unused imports across `core/` and `ui/`.
+- **UI Deduplication & Centralization**: Refactored `AppProfilesDialog` to use `ConfigManager` APIs, centralized Omarchy color palette extraction, and unified autostart `.desktop` generation.
+- **Logging & Exception Hardening**: Replaced silent `except:` blocks with structured `logging.debug()` calls and configured 2 MB `RotatingFileHandler` for OpenDeck plugin logs.
+- **i18n & Model Centralization**: Centralized `WHISPER_MODELS_LIST` and `GEMINI_MODELS_LIST` in `core/config.py` and internationalized Gemini Live / AEC calibration status messages across 4 languages.
+- **Tests & Documentation**: Added regression unit tests for Keyring retry logic, refactored D-Bus integration tests to use `unittest` mocks, updated IPC specification documentation, and added `TextEncoder` compatibility to GNOME Shell extension.
+- **Smart Fallback Backend Downgrade**: Fixed speculative dual-race fallback to only permanently downgrade `stt_backend` to `local_whisper` on hard, unrecoverable API errors (`QUOTA_EXCEEDED`, `INVALID_API_KEY`). Transient failures (`NETWORK_ERROR`, `SERVICE_UNAVAILABLE`) now fall back to local for the current session only, automatically retrying Gemini Live on the next dictation.
+- **Omarchy Quick Menu Cleanup**: Removed the Real-Time Streaming toggle from the Omarchy bar widget's quick-access panel. This advanced setting is now exclusively accessible through the full Settings dialog, reducing clutter in everyday use.
+
 ## [1.2.0] - 2026-09-13
 
 ### Added

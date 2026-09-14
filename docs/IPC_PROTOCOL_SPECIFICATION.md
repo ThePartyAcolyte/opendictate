@@ -312,7 +312,7 @@ gdbus call --session \
 
 ---
 
-## 7. Secondary Transport: Unix Domain Socket (`/tmp/opendictate.socket`)
+## 7. Secondary Transport: Unix Domain Socket (`$XDG_RUNTIME_DIR/opendictate.socket`)
 
 For lightweight command-line triggers, scripts, and local keyboard bindings, OpenDictate provides a raw text Unix Domain Socket.
 
@@ -328,8 +328,12 @@ For lightweight command-line triggers, scripts, and local keyboard bindings, Ope
 * `wizard`: Opens the Initial Setup Wizard.
 * `set-config <key>:<value>`: Modifies configuration parameter dynamically.
 * `set-bar-position <left|center|right>`: Relocates top bar widget in Omarchy shell.
+* `quit`: Terminates and closes daemon cleanly.
+* `reload-config`: Reloads profiles and configuration settings.
+* `pause-voice-listener`: Temporarily pauses background idle microphone listener.
+* `resume-voice-listener`: Resumes background idle microphone listener.
 
 #### Socket Example (Bash / Netcat):
 ```bash
-echo "record" | nc -U -u -q 0 /tmp/opendictate.socket
+echo "record" | nc -U -q 0 "$XDG_RUNTIME_DIR/opendictate.socket"
 ```

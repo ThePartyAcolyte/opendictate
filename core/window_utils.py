@@ -5,6 +5,7 @@ Resolves active application window class name and window title using AT-SPI (pya
 or system environment fallbacks.
 """
 
+import os
 import json
 import logging
 import shutil
@@ -136,7 +137,7 @@ def restore_window_focus(app_class: str, window_title: str, window_address: Opti
     Returns:
         True if focus restoration succeeded, False otherwise.
     """
-    import os, socket
+    import socket
 
     if not app_class and not window_title and not window_address:
         return False
@@ -261,7 +262,6 @@ def capture_active_window_screenshot(output_path: str = "/tmp/dictate_vision.png
     Returns:
         True if an image was captured and saved to output_path, False otherwise.
     """
-    import os
 
     # 1. Native Hyprland (Arch / Omarchy) via grim + activewindow coordinates
     hyprctl_path = shutil.which("hyprctl")
@@ -393,7 +393,6 @@ def is_herder_window(window_address: Optional[str]) -> bool:
     Returns:
         True if herdr is a child process of the window, False otherwise.
     """
-    import json
     if not window_address or window_address == "unknown":
         return False
         
@@ -429,7 +428,6 @@ def get_herder_context() -> Tuple[Optional[str], Optional[str]]:
     Returns:
         Tuple of (tab_id, workspace_id).
     """
-    import json
     
     # Query herdr api snapshot
     herdr_path = shutil.which("herdr")

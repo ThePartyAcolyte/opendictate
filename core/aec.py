@@ -6,14 +6,13 @@ via chirp correlation, and real-time PCM microphone saturation (clipping) monito
 """
 
 import os
-import math
 import struct
 import subprocess
 import tempfile
 import time
 import logging
 from dataclasses import dataclass
-from typing import Optional, Callable, Dict, Any, List, Tuple
+from typing import Optional, Callable, Tuple
 
 import numpy as np
 
@@ -230,12 +229,14 @@ class AcousticCalibrator:
                 except Exception: pass
 
             mic_samples = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+            from i18n import get_translator
+            i18n = get_translator("en")
             if len(mic_samples) < len(ref_signal):
                 return CalibrationResult(
                     delay_ms=0.0,
                     correlation_peak=0.0,
                     is_valid=False,
-                    message="Audio capturado insuficiente para calibración."
+                    message=i18n.t("aec_insufficient_audio")
                 )
 
             # Compute cross-correlation with sliding window normalization
@@ -245,9 +246,9 @@ class AcousticCalibrator:
             delay_ms = max(0.0, raw_delay_ms - (pre_play_delay * 1000.0))
 
             is_valid = peak_val >= 0.15
-            msg = f"Latencia: {delay_ms:.1f} ms (Correlación: {peak_val:.2f})"
+            msg = i18n.t("aec_latency_result", delay_ms=f"{delay_ms:.1f}", peak_val=f"{peak_val:.2f}")
             if not is_valid:
-                msg = f"Baja correlación ({peak_val:.2f}). Asegúrese de que los altavoces se escuchan."
+                msg = i18n.t("aec_low_correlation", peak_val=f"{peak_val:.2f}")
 
             return CalibrationResult(
                 delay_ms=round(delay_ms, 1),
@@ -256,11 +257,13 @@ class AcousticCalibrator:
                 message=msg
             )
         except Exception as e:
+            from i18n import get_translator
+            i18n = get_translator("en")
             return CalibrationResult(
                 delay_ms=0.0,
                 correlation_peak=0.0,
                 is_valid=False,
-                message=f"Signal processing error: {e}"
+                message=i18n.t("aec_calibration_error", error=str(e))
             )
 
 

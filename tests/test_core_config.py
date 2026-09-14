@@ -83,6 +83,13 @@ class TestConfigManager(unittest.TestCase):
         self.assertEqual(history[0], ("print('hi')", "print hi"))
         self.assertEqual(history[1], ("def hello_world():", "def hello world"))
 
+    @unittest.mock.patch('core.config.keyring')
+    def test_get_api_key_safe_retry(self, mock_keyring):
+        """Test that keyring failure retry loop runs without NameError (requires import time in core/config.py)."""
+        mock_keyring.get_password.side_effect = Exception("Keyring failure")
+        key = self.config_manager._get_api_key_safe()
+        self.assertEqual(key, "")
+
 
 if __name__ == "__main__":
     unittest.main()

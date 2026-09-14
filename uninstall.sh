@@ -37,13 +37,29 @@ echo "🧩 Desinstalando extensión GNOME Shell..."
 gnome-extensions disable com.kirulab.opendictate@kirulab.com 2>/dev/null || true
 rm -rf "$HOME/.local/share/gnome-shell/extensions/com.kirulab.opendictate@kirulab.com"
 
+echo "🪄 Eliminando plugin de Omarchy Shell..."
+rm -rf "$HOME/.config/omarchy/plugins/com.kirulab.opendictate"
+if [ -f "$HOME/.config/omarchy/shell.json" ]; then
+    python3 -c '
+import json, os
+p = os.path.expanduser("~/.config/omarchy/shell.json")
+try:
+    with open(p, "r") as f: d = json.load(f)
+    for s in ["left", "center", "right"]:
+        if "bar" in d and "layout" in d["bar"] and s in d["bar"]["layout"]:
+            d["bar"]["layout"][s] = [i for i in d["bar"]["layout"][s] if not (isinstance(i, dict) and i.get("id") == "com.kirulab.opendictate")]
+    with open(p, "w") as f: json.dump(d, f, indent=2)
+except Exception: pass
+' || true
+fi
+
 echo "📦 Eliminando plugins de OpenDeck..."
 rm -rf "$HOME/.config/opendeck/plugins/com.kirulab.opendictate.sdplugin"
 rm -rf "$HOME/.config/opendeck/plugins/com.kirulab.dictate.sdplugin"
 rm -rf "$HOME/.config/opendeck/plugins/com.butcherwutcher.dictate.sdplugin"
 
 echo "🧹 Limpiando archivos temporales..."
-rm -f /tmp/opendictate.socket
+rm -f "${XDG_RUNTIME_DIR:-/tmp}/opendictate.socket"
 rm -f /tmp/opendictate_state.json
 rm -f /tmp/dictate_daemon.socket
 rm -f /tmp/dictate_state.json

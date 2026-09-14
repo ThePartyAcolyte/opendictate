@@ -10,7 +10,7 @@ import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const STATE_FILE = '/tmp/opendictate_state.json';
-const SOCKET_PATH = '/tmp/opendictate.socket';
+const SOCKET_PATH = GLib.getenv('XDG_RUNTIME_DIR') ? `${GLib.getenv('XDG_RUNTIME_DIR')}/opendictate.socket` : '/tmp/opendictate.socket';
 
 const Waveform = GObject.registerClass(
 class Waveform extends St.DrawingArea {
@@ -344,7 +344,8 @@ class OpenDictateIndicator extends PanelMenu.Button {
                 try {
                     let connection = client.connect_finish(res);
                     let output = connection.get_output_stream();
-                    output.write_bytes_async(new GLib.Bytes(cmd), GLib.PRIORITY_DEFAULT, null, (stream, res2) => {
+                    let encoder = new TextEncoder();
+                    output.write_bytes_async(new GLib.Bytes(encoder.encode(cmd)), GLib.PRIORITY_DEFAULT, null, (stream, res2) => {
                         stream.write_bytes_finish(res2);
                         connection.close(null);
                     });

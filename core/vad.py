@@ -121,14 +121,6 @@ class VADStreamSegmenter:
 
             self.frames_history.append((frame_time, rms, is_speech))
 
-    def get_trailing_silence_duration(self, current_audio_time: float) -> float:
-        """Return the current ongoing silence duration in seconds."""
-        if self.current_silence_start is not None:
-            return max(0.0, current_audio_time - self.current_silence_start)
-        if self.last_speech_time > 0.0:
-            return max(0.0, current_audio_time - self.last_speech_time)
-        return 0.0
-
     def find_cut_point(self, current_audio_time: float, last_cut_time: float) -> Optional[float]:
         """Evaluate whether a natural or fallback chunk cut point has been reached.
 

@@ -5,11 +5,10 @@ Supports sliding-window real-time chunk transcription and single-pass full-audio
 """
 
 import re
-import time
 import logging
 import threading
 import numpy as np
-from typing import Dict, Any, Optional, Tuple, Callable, List
+from typing import Dict, Any, Optional, Tuple, List
 
 KNOWN_MODEL_SIZES = [
     "large-v3",

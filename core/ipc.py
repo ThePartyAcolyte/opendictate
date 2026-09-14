@@ -9,7 +9,7 @@ import socket
 import logging
 from typing import Callable, Dict, Optional
 
-SOCKET_PATH = "/tmp/opendictate.socket"
+SOCKET_PATH = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "opendictate.socket")
 
 
 class IPCServer:
@@ -44,7 +44,16 @@ class IPCServer:
                 conn, _ = self.sock.accept()
                 try:
                     conn.settimeout(0.5)
-                    data = conn.recv(1024).decode('utf-8').strip()
+                    chunks = []
+                    while True:
+                        try:
+                            chunk = conn.recv(1024)
+                            if not chunk:
+                                break
+                            chunks.append(chunk.decode('utf-8'))
+                        except socket.timeout:
+                            break
+                    data = "".join(chunks).strip()
                 finally:
                     conn.close()
 
@@ -75,10 +84,10 @@ class IPCServer:
         if self.sock:
             try:
                 self.sock.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logging.debug(f"Error closing IPC socket: {e}")
         if os.path.exists(SOCKET_PATH):
             try:
                 os.remove(SOCKET_PATH)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.debug(f"Error removing IPC socket file: {e}")
