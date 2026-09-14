@@ -129,25 +129,12 @@ def main() -> None:
     elif "--wizard" in sys.argv or "wizard" in sys.argv or "--wizard-gtk" in sys.argv:
         cmd = "wizard"
     elif "--toggle-autostart" in sys.argv:
-        autostart_dir = os.path.expanduser("~/.config/autostart")
-        autostart_path = os.path.join(autostart_dir, "opendictate.desktop")
+        autostart_path = os.path.expanduser("~/.config/autostart/opendictate.desktop")
         if os.path.exists(autostart_path):
-            os.remove(autostart_path)
+            config_manager.set_autostart_enabled(False)
             print("Autostart disabled.")
         else:
-            os.makedirs(autostart_dir, exist_ok=True)
-            home = os.path.expanduser("~")
-            content = f"""[Desktop Entry]
-Type=Application
-Name=OpenDictate
-Exec={home}/.local/share/opendictate/.venv/bin/python {home}/.local/share/opendictate/opendictate-daemon.py --force-start
-Icon={home}/.local/share/opendictate/img/logo.png
-Terminal=false
-Categories=Utility;AudioVideo;Accessibility;
-X-GNOME-Autostart-enabled=true
-"""
-            with open(autostart_path, "w") as f:
-                f.write(content)
+            config_manager.set_autostart_enabled(True)
             print("Autostart enabled.")
         sys.exit(0)
     elif "--set-bar-position" in sys.argv:

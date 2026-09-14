@@ -7,6 +7,7 @@ application profiles, and dictation history storage.
 
 import os
 import json
+import time
 import sqlite3
 import logging
 from typing import Dict, Any, Optional, Tuple, List
@@ -384,3 +385,44 @@ class ConfigManager:
         except Exception as e:
             logging.error(f"Error fetching recent history: {e}")
             return []
+
+    def set_autostart_enabled(self, enabled: bool) -> None:
+        """Enable or disable system autostart for OpenDictate daemon."""
+        autostart_dir = os.path.expanduser("~/.config/autostart")
+        autostart_path = os.path.join(autostart_dir, "opendictate.desktop")
+        
+        if enabled:
+            os.makedirs(autostart_dir, exist_ok=True)
+            install_dir = os.path.expanduser("~/.local/share/opendictate")
+            desktop_content = f"""[Desktop Entry]
+Type=Application
+Name=OpenDictate
+Comment=Background daemon for global voice dictation using faster-whisper
+Exec={install_dir}/.venv/bin/python {install_dir}/opendictate-daemon.py --force-start
+Icon={install_dir}/img/logo.png
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+"""
+            with open(autostart_path, "w") as f:
+                f.write(desktop_content)
+        else:
+            if os.path.exists(autostart_path):
+                os.remove(autostart_path)
+
+
+WHISPER_MODELS_LIST = [
+    ("small", "244 MB", "Balance ideal (Recomendado)"),
+    ("base", "74 MB", "Rápido / CPU o GPU"),
+    ("tiny", "39 MB", "Ultraligero / CPU"),
+    ("medium", "769 MB", "Alta precisión / GPU"),
+    ("large-v3", "1.5 GB", "Máxima precisión"),
+    ("large-v3-turbo", "809 MB", "Rápido y preciso"),
+]
+
+GEMINI_MODELS_LIST = [
+    ("gemini-3.1-flash-live-preview", "Predeterminado Live API / Limpieza en tiempo real"),
+    ("gemma-4-26b-a4b-it", "Capa gratuita en Google AI Studio (REST)"),
+    ("gemini-2.5-flash", "Razonamiento avanzado para prompts complejos"),
+    ("gemini-2.5-flash-lite", "Ultra bajo costo y mínima latencia"),
+]

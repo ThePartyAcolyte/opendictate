@@ -4,5 +4,7 @@ pycairo
 keyring
 numpy
 textual
+websockets
+Pillow
 
 

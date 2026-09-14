@@ -8,6 +8,7 @@ and provides recommendations for Whisper model selection.
 import os
 import shutil
 import subprocess
+import logging
 from typing import Dict, Any, Tuple
 
 
@@ -24,15 +25,16 @@ def get_system_ram_gb() -> float:
                     if line.startswith("MemTotal:"):
                         kb = float(line.split()[1])
                         return round(kb / (1024.0 * 1024.0), 1)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.debug(f"Error reading /proc/meminfo: {e}")
 
     try:
         page_size = os.sysconf("SC_PAGE_SIZE")
         phys_pages = os.sysconf("SC_PHYS_PAGES")
         total_bytes = page_size * phys_pages
         return round(total_bytes / (1024.0 ** 3), 1)
-    except Exception:
+    except Exception as e:
+        logging.debug(f"Error reading SC_PAGE_SIZE/SC_PHYS_PAGES sysconf: {e}")
         return 4.0
 
 
@@ -48,7 +50,8 @@ def is_cuda_runtime_ready() -> bool:
         ).to_device(ctranslate2.Device.cuda)
         del test_storage
         return True
-    except Exception:
+    except Exception as e:
+        logging.debug(f"CUDA runtime availability check failed: {e}")
         return False
 
 
@@ -57,7 +60,8 @@ def get_cpu_core_count() -> int:
     try:
         count = os.cpu_count()
         return count if count and count > 0 else 1
-    except Exception:
+    except Exception as e:
+        logging.debug(f"Error getting cpu_count: {e}")
         return 1
 
 
@@ -105,8 +109,8 @@ def get_gpu_info() -> Dict[str, Any]:
                 info["backend"] = "cuda"
                 info["cuda_ready"] = is_cuda_runtime_ready()
                 return info
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug(f"nvidia-smi detection error: {e}")
 
     # Check NVIDIA via lspci fallback
     lspci = shutil.which("lspci")
@@ -115,14 +119,14 @@ def get_gpu_info() -> Dict[str, Any]:
             res = subprocess.run([lspci], capture_output=True, text=True, timeout=1.5)
             if res.returncode == 0 and "nvidia" in res.stdout.lower():
                 for line in res.stdout.splitlines():
-                    if "vga" in line.lower() or "3d" in line.lower() and "nvidia" in line.lower():
+                    if ("vga" in line.lower() or "3d" in line.lower()) and "nvidia" in line.lower():
                         info["has_gpu"] = True
                         info["gpu_name"] = "NVIDIA GeForce / Quadro"
                         info["backend"] = "cuda"
                         info["cuda_ready"] = is_cuda_runtime_ready()
                         return info
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug(f"lspci detection error: {e}")
 
     # Check AMD ROCm / rocm-smi
     rocm_smi = shutil.which("rocm-smi")
@@ -135,8 +139,8 @@ def get_gpu_info() -> Dict[str, Any]:
                 info["backend"] = "rocm"
                 info["cuda_ready"] = False
                 return info
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug(f"rocm-smi detection error: {e}")
 
     return info
 
@@ -161,8 +165,8 @@ def detect_desktop_environment() -> Tuple[str, bool]:
             res = subprocess.run(["gnome-shell", "--version"], capture_output=True, text=True, timeout=1.0)
             if res.returncode == 0 and "GNOME Shell" in res.stdout:
                 is_gnome = True
-        except Exception:
-            pass
+        except Exception as e:
+            logging.debug(f"gnome-shell version check error: {e}")
 
     return de_name, is_gnome
 
@@ -185,3 +189,58 @@ def recommend_whisper_model(ram_gb: float, has_gpu: bool) -> Tuple[str, str, str
         return ("small", "wizard_model_small", "wizard_rec_desc_small")
     else:
         return ("medium", "wizard_model_medium", "wizard_rec_desc_medium")
+
+
+def get_omarchy_palette() -> Dict[str, str]:
+    """Extract semantic color palette from active Omarchy theme."""
+    palette = {
+        "bg": "#0c0b0c",
+        "fg": "#FAFCFB",
+        "accent": "#b59790",
+        "primary": "#b59790",
+        "secondary": "#a5a0b6",
+        "surface": "#161416",
+        "panel": "#201c21",
+        "border": "#584e51",
+        "error": "#c38b7b",
+        "success": "#87a9b0",
+        "warning": "#6B5E73",
+        "muted": "#8a8588",
+    }
+    try:
+        res = subprocess.run(
+            ["omarchy", "theme", "color", "--all"],
+            capture_output=True,
+            text=True,
+            timeout=0.8
+        )
+        if res.returncode == 0:
+            for line in res.stdout.splitlines():
+                parts = line.strip().split("\t")
+                if len(parts) == 2:
+                    k, v = parts[0].strip(), parts[1].strip()
+                    if k in ("bg", "background"):
+                        palette["bg"] = v
+                    elif k in ("fg", "foreground"):
+                        palette["fg"] = v
+                    elif k == "accent":
+                        palette["accent"] = v
+                        palette["primary"] = v
+                    elif k in ("cyan", "bright_cyan"):
+                        palette["secondary"] = v
+                    elif k in ("selection", "selection_background"):
+                        palette["panel"] = v
+                    elif k in ("lighter_bg", "lighter_background"):
+                        palette["surface"] = v
+                    elif k in ("red", "color1"):
+                        palette["error"] = v
+                    elif k in ("green", "color2"):
+                        palette["success"] = v
+                    elif k in ("yellow", "color3"):
+                        palette["warning"] = v
+                    elif k == "muted":
+                        palette["muted"] = v
+                        palette["border"] = v
+    except Exception as e:
+        logging.debug(f"omarchy palette extraction error: {e}")
+    return palette

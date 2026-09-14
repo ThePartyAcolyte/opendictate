@@ -21,16 +21,18 @@ def main():
             from core.config import ConfigManager
             from ui.wizard import FirstRunWizard
 
+            import logging
             config_mgr = ConfigManager()
             wizard = FirstRunWizard(
                 config_mgr,
-                on_finish=lambda cfg: print("Wizard finished with config:", cfg)
+                on_finish=lambda cfg: logging.info(f"Wizard finished with config: {cfg}")
             )
             wizard.connect("destroy", Gtk.main_quit)
             Gtk.main()
             return
         except Exception as e:
-            print(f"Error opening GTK wizard: {e}. Falling back to TUI...")
+            import logging
+            logging.warning(f"Error opening GTK wizard: {e}. Falling back to TUI...")
 
     from ui.wizard_tui import run_wizard
     run_wizard()

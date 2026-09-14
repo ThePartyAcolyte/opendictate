@@ -11,7 +11,6 @@ import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
-import sqlite3
 import json
 import os
 import time
@@ -187,6 +186,7 @@ class AppProfilesDialog(Gtk.Dialog):
         self.db_path = db_path
         self.i18n = i18n
         self.auto_save_cb = auto_save_cb
+        self.config_manager = getattr(parent, "config_manager", None) or ConfigManager()
         self.current_selected_app = None
         self._updating_ui = False
         
@@ -266,26 +266,26 @@ class AppProfilesDialog(Gtk.Dialog):
         self.load_profiles()
 
     def load_profiles(self) -> None:
-        """Query SQLite database and populate profile listbox rows."""
+        """Query ConfigManager and populate profile listbox rows."""
         for child in self.listbox.get_children():
             self.listbox.remove(child)
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT app_class FROM app_profiles")
-            for row in cursor.fetchall():
+            profiles = self.config_manager.get_all_app_profiles()
+            for profile in profiles:
+                app_cls = profile.get("app_class", "")
+                if not app_cls:
+                    continue
                 row_widget = Gtk.ListBoxRow()
                 row_widget.get_style_context().add_class("preference-row")
-                lbl = Gtk.Label(label=row[0], xalign=0, margin=10)
+                lbl = Gtk.Label(label=app_cls, xalign=0, margin=10)
                 lbl.get_style_context().add_class("row-title")
                 row_widget.add(lbl)
-                row_widget.app_class = row[0]
+                row_widget.app_class = app_cls
                 self.listbox.add(row_widget)
-            conn.close()
             self.listbox.show_all()
         except Exception as e:
-            print("Error loading profiles:", e)
+            logging.error(f"Error loading profiles: {e}")
 
     def on_app_selected(self, listbox: Gtk.ListBox, row: Optional[Gtk.ListBoxRow]) -> None:
         """Handle profile row selection to load custom prompt and vision settings.
@@ -310,45 +310,12 @@ class AppProfilesDialog(Gtk.Dialog):
         self.current_app_label.set_markup(f"<span size='large' weight='bold'>{escaped_title}</span>")
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("SELECT system_prompt, enable_vision FROM app_profiles WHERE app_class = ?", (self.current_selected_app,))
-            data = cursor.fetchone()
-            conn.close()
-
-            if data:
-                self.prompt_view.get_buffer().set_text(data[0] if data[0] else "")
-                self.vision_switch.set_active(bool(data[1]))
+            prompt, vision = self.config_manager.get_app_profile(self.current_selected_app)
+            self.prompt_view.get_buffer().set_text(prompt if prompt else "")
+            self.vision_switch.set_active(bool(vision))
         except Exception as e:
-            print("Error loading profile details:", e)
+            logging.error(f"Error loading profile details: {e}")
         self._updating_ui = False
-
-    def get_open_apps(self) -> List[str]:
-        """Detect currently open application classes via pyatspi accessibility tree.
-
-        Returns:
-            List of unique application name strings formatted as 'Window [AppClass]'.
-        """
-        apps = set()
-        try:
-            import pyatspi
-            desktop = pyatspi.Registry.getDesktop(0)
-            for app in desktop:
-                if not app:
-                    continue
-                if app.name:
-                    window_name = ""
-                    for window in app:
-                        if window and window.name:
-                            window_name = window.name
-                            break
-                    if window_name:
-                        apps.add(f"{window_name} [{app.name}]")
-                    else:
-                        apps.add(f"{app.name} [{app.name}]")
-        except Exception:
-            pass
-        return sorted(list(apps))
 
     def on_add_app(self, btn: Gtk.Button) -> None:
         """Present modal dialog to choose an active app or enter a custom window class.
@@ -366,8 +333,9 @@ class AppProfilesDialog(Gtk.Dialog):
         dialog.format_secondary_text(self.i18n.t("dialog_new_app_msg"))
 
         combo = Gtk.ComboBoxText.new_with_entry()
-        for app in self.get_open_apps():
-            combo.append_text(app)
+        from core.window_utils import get_open_windows_list
+        for w in get_open_windows_list():
+            combo.append_text(f"{w.get('title', '')} [{w.get('class', '')}]")
 
         dialog.get_message_area().pack_start(combo, False, False, 0)
         dialog.show_all()
@@ -384,14 +352,7 @@ class AppProfilesDialog(Gtk.Dialog):
 
         if response == Gtk.ResponseType.OK and app_name:
             try:
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                cursor.execute(
-                    "INSERT OR IGNORE INTO app_profiles (app_class, system_prompt, enable_vision) VALUES (?, '', 0)",
-                    (app_name,)
-                )
-                conn.commit()
-                conn.close()
+                self.config_manager.save_app_profile(app_name, "", False)
                 self.load_profiles()
             except Exception as e:
                 self.show_message(self.i18n.t("error", ""), str(e))
@@ -407,16 +368,9 @@ class AppProfilesDialog(Gtk.Dialog):
         vision = 1 if self.vision_switch.get_active() else 0
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE app_profiles SET system_prompt = ?, enable_vision = ? WHERE app_class = ?",
-                (prompt, vision, self.current_selected_app)
-            )
-            conn.commit()
-            conn.close()
+            self.config_manager.save_app_profile(self.current_selected_app, prompt, bool(vision))
         except Exception as e:
-            print("Auto-save profile error:", e)
+            logging.error(f"Auto-save profile error: {e}")
 
     def delete_current_profile(self, btn: Gtk.Button) -> None:
         """Delete currently selected profile from SQLite database.
@@ -428,11 +382,7 @@ class AppProfilesDialog(Gtk.Dialog):
             return
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM app_profiles WHERE app_class = ?", (self.current_selected_app,))
-            conn.commit()
-            conn.close()
+            self.config_manager.delete_app_profile(self.current_selected_app)
             self.load_profiles()
             self.on_app_selected(self.listbox, None)
         except Exception as e:
@@ -707,8 +657,9 @@ class ConfigWindow(Gtk.Window):
         list_api.add(self._create_control_row(self.i18n.t("lbl_api_key"), self.api_key_entry))
 
         self.model_combo = Gtk.ComboBoxText.new_with_entry()
-        self.model_combo.append_text("gemini-3.1-flash-live-preview")
-        self.model_combo.append_text("gemma-4-26b-a4b-it")
+        from core.config import GEMINI_MODELS_LIST
+        for mod_id, _ in GEMINI_MODELS_LIST:
+            self.model_combo.append_text(mod_id)
         current_model = self.config.get("model", "gemini-3.1-flash-live-preview")
         self.model_combo.get_child().set_text(current_model)
         self.model_combo.connect("changed", self.auto_save)
@@ -1940,26 +1891,8 @@ class ConfigWindow(Gtk.Window):
             self.config["realtime_mode"] = self.realtime_switch.get_active()
 
         # Handle autostart desktop file
-        autostart_dir = os.path.expanduser("~/.config/autostart")
-        autostart_path = os.path.join(autostart_dir, "opendictate.desktop")
-        if self.autostart_switch.get_active():
-            os.makedirs(autostart_dir, exist_ok=True)
-            install_dir = os.path.expanduser("~/.local/share/opendictate")
-            desktop_content = f"""[Desktop Entry]
-Type=Application
-Name=OpenDictate
-Comment=Background daemon for global voice dictation using faster-whisper
-Exec={install_dir}/.venv/bin/python {install_dir}/opendictate-daemon.py
-Hidden=false
-NoDisplay=false
-X-GNOME-Autostart-enabled=true
-Icon=audio-input-microphone
-"""
-            with open(autostart_path, "w") as f:
-                f.write(desktop_content)
-        else:
-            if os.path.exists(autostart_path):
-                os.remove(autostart_path)
+        if hasattr(self, 'autostart_switch'):
+            self.config_manager.set_autostart_enabled(self.autostart_switch.get_active())
 
         # Save Model / AI Settings
         if hasattr(self, 'api_key_entry'):
@@ -2455,19 +2388,6 @@ Icon=audio-input-microphone
             GLib.idle_add(_done)
 
         threading.Thread(target=_worker, daemon=True).start()
-
-    def _notify_daemon_reload(self) -> None:
-        """Signal running daemon to reload config via Unix domain socket."""
-        try:
-            import socket
-            from core.ipc import SOCKET_PATH
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            s.settimeout(0.5)
-            s.connect(SOCKET_PATH)
-            s.sendall(b"reload-config")
-            s.close()
-        except Exception:
-            pass
 
 
 

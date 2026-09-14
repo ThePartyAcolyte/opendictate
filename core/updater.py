@@ -263,7 +263,6 @@ def perform_user_update(
                 "opendictate-client.py",
                 "opendictate_config_ui.py",
                 "launch_wizard.py",
-                "i18n.py",
                 "install.sh",
                 "uninstall.sh"
             ]
@@ -364,10 +363,10 @@ def restart_opendictate_service() -> None:
         subprocess.run(["pkill", "-9", "-f", "opendictate-daemon.py"], capture_output=True)
         time.sleep(0.8)
 
-        # Remove stale socket
-        if os.path.exists("/tmp/opendictate.socket"):
+        socket_path = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "opendictate.socket")
+        if os.path.exists(socket_path):
             try:
-                os.remove("/tmp/opendictate.socket")
+                os.remove(socket_path)
             except Exception:
                 pass
 

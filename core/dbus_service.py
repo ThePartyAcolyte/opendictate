@@ -20,7 +20,6 @@ Signals:
 
 import json
 import logging
-import uuid
 from typing import Any, Callable, Dict, Optional
 
 import gi

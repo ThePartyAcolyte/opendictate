@@ -35,17 +35,13 @@ from textual.binding import Binding
 
 from core.config import ConfigManager, CONFIG_PATH
 from core.ipc import SOCKET_PATH
-from core.hardware import get_system_hardware_info
+from core.hardware import get_gpu_info, get_omarchy_palette
 from i18n.translator import get_translator
 
 
-WHISPER_MODELS = [
-    ("small (244 MB - Recomendado)", "small"),
-    ("base (74 MB - Rápido)", "base"),
-    ("tiny (39 MB - Ultraligero)", "tiny"),
-    ("medium (769 MB - Alta precisión)", "medium"),
-    ("large-v3-turbo (809 MB)", "large-v3-turbo"),
-]
+from core.config import WHISPER_MODELS_LIST, GEMINI_MODELS_LIST
+
+WHISPER_MODELS = [(f"{name} ({size} - {desc})", name) for name, size, desc in WHISPER_MODELS_LIST]
 
 LANGUAGES = [
     ("Español", "es"),
@@ -54,66 +50,10 @@ LANGUAGES = [
     ("Français", "fr"),
 ]
 
-GEMINI_MODELS = [
-    ("Gemma 4 26B (Recomendado)", "gemma-4-26b-a4b-it"),
-    ("Gemini 2.5 Flash", "gemini-2.5-flash"),
-    ("Gemini 2.0 Flash", "gemini-2.0-flash"),
-]
+GEMINI_MODELS = [(f"{name} ({desc})", name) for name, desc in GEMINI_MODELS_LIST]
 
 
-def get_omarchy_palette() -> Dict[str, str]:
-    """Extract semantic color palette from active Omarchy theme."""
-    palette = {
-        "bg": "#0c0b0c",
-        "fg": "#FAFCFB",
-        "accent": "#b59790",
-        "primary": "#b59790",
-        "secondary": "#a5a0b6",
-        "surface": "#161416",
-        "panel": "#201c21",
-        "border": "#584e51",
-        "error": "#c38b7b",
-        "success": "#87a9b0",
-        "warning": "#6B5E73",
-        "muted": "#8a8588",
-    }
-    try:
-        res = subprocess.run(
-            ["omarchy", "theme", "color", "--all"],
-            capture_output=True,
-            text=True,
-            timeout=0.8
-        )
-        if res.returncode == 0:
-            for line in res.stdout.splitlines():
-                parts = line.strip().split("\t")
-                if len(parts) == 2:
-                    k, v = parts[0].strip(), parts[1].strip()
-                    if k in ("bg", "background"):
-                        palette["bg"] = v
-                    elif k in ("fg", "foreground"):
-                        palette["fg"] = v
-                    elif k == "accent":
-                        palette["accent"] = v
-                        palette["primary"] = v
-                    elif k in ("cyan", "bright_cyan"):
-                        palette["secondary"] = v
-                    elif k in ("selection", "selection_background"):
-                        palette["panel"] = v
-                    elif k in ("lighter_bg", "lighter_background"):
-                        palette["surface"] = v
-                    elif k in ("red", "color1"):
-                        palette["error"] = v
-                    elif k in ("green", "color2"):
-                        palette["success"] = v
-                    elif k in ("yellow", "color3"):
-                        palette["warning"] = v
-                    elif k == "muted":
-                        palette["muted"] = v
-                        palette["border"] = v
-    except Exception:
-        pass
-    return palette
+
 
 
 PALETTE = get_omarchy_palette()
@@ -226,7 +166,7 @@ class WizardTUI(App):
         super().__init__(**kwargs)
         self.cm = ConfigManager()
         self.cfg = self.cm.load_config()
-        self.hw_info = get_system_hardware_info()
+        self.hw_info = get_gpu_info()
         self.current_step = 0
         self.total_steps = 5
 
@@ -256,7 +196,7 @@ class WizardTUI(App):
                     with VerticalScroll():
                         yield Label("Detección de Hardware y Modelo STT", classes="step-title")
 
-                        gpu_text = f"GPU: {self.hw_info.get('gpu_name', 'No detectada')} | CUDA: {'Disponible' if self.hw_info.get('has_cuda') else 'No'}"
+                        gpu_text = f"GPU: {self.hw_info.get('gpu_name', 'No detectada')} | CUDA: {'Disponible' if self.hw_info.get('cuda_ready') else 'No'}"
                         yield Static(f"Diagnóstico del Sistema:\n• {gpu_text}\n• CPU Threads: {os.cpu_count() or 4}", classes="card-box")
 
                         with Vertical(classes="card-box"):

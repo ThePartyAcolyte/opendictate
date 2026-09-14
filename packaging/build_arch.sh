@@ -43,7 +43,6 @@ cp opendictate-daemon.py "${PKG_DIR}/opt/opendictate/"
 cp opendictate-client.py "${PKG_DIR}/opt/opendictate/"
 cp opendictate_config_ui.py "${PKG_DIR}/opt/opendictate/"
 cp launch_wizard.py "${PKG_DIR}/opt/opendictate/"
-cp i18n.py "${PKG_DIR}/opt/opendictate/"
 cp -r i18n "${PKG_DIR}/opt/opendictate/"
 cp -r core "${PKG_DIR}/opt/opendictate/"
 cp -r ui "${PKG_DIR}/opt/opendictate/"
@@ -121,6 +120,26 @@ chmod +x "${PKG_DIR}/usr/bin/opendictate"
 cat > "${BUILD_DIR}/opendictate.install" << 'INSTALL_EOF'
 post_install() {
     echo "🐍 Configurando entorno para OpenDictate..."
+    VENV_DIR="/opt/opendictate/.venv"
+    if ! command -v uv &> /dev/null; then
+        curl -LsSf https://astral.sh/uv/install.sh | sh || true
+        export PATH="$HOME/.cargo/bin:/root/.cargo/bin:$PATH"
+    fi
+    
+    if command -v uv &> /dev/null; then
+        uv venv --system-site-packages --python /usr/bin/python3 "$VENV_DIR" || true
+        uv pip install faster-whisper google-genai pycairo keyring textual numpy websockets Pillow --python "$VENV_DIR" || true
+        if command -v nvidia-smi &> /dev/null || (command -v lspci &> /dev/null && lspci | grep -iq nvidia); then
+            uv pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 --python "$VENV_DIR" || true
+        fi
+    else
+        python3 -m venv --system-site-packages "$VENV_DIR" || true
+        "$VENV_DIR/bin/pip" install faster-whisper google-genai pycairo keyring textual numpy websockets Pillow || true
+        if command -v nvidia-smi &> /dev/null || (command -v lspci &> /dev/null && lspci | grep -iq nvidia); then
+            "$VENV_DIR/bin/pip" install nvidia-cublas-cu12 nvidia-cudnn-cu12 || true
+        fi
+    fi
+
     if command -v update-desktop-database &> /dev/null; then
         update-desktop-database -q || true
     fi

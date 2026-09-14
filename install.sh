@@ -5,6 +5,7 @@ INSTALL_DIR="$HOME/.local/share/opendictate"
 VENV_DIR="$INSTALL_DIR/.venv"
 OMARCHY_PLUGINS_DIR="$HOME/.config/omarchy/plugins"
 GNOME_EXT_DIR="$HOME/.local/share/gnome-shell/extensions/com.kirulab.opendictate@kirulab.com"
+OPENDECK_PLUGINS_DIR="$HOME/.config/opendeck/plugins"
 
 echo "🚀 Instalando / Actualizando OpenDictate en $INSTALL_DIR..."
 
@@ -23,7 +24,6 @@ cp opendictate-daemon.py "$INSTALL_DIR/"
 cp opendictate-client.py "$INSTALL_DIR/"
 cp opendictate_config_ui.py "$INSTALL_DIR/"
 cp launch_wizard.py "$INSTALL_DIR/"
-cp i18n.py "$INSTALL_DIR/"
 cp -r i18n "$INSTALL_DIR/"
 cp -r core "$INSTALL_DIR/"
 cp -r ui "$INSTALL_DIR/"
@@ -91,12 +91,12 @@ if [ ! -d "$VENV_DIR" ] || [ ! -f "$VENV_DIR/bin/python" ]; then
     if ! command -v uv &> /dev/null; then
         echo "Instalando uv..."
         curl -LsSf https://astral.sh/uv/install.sh | sh
-        export PATH="$HOME/.cargo/bin:$PATH"
+        export PATH="$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
     fi
     uv venv --system-site-packages --python /usr/bin/python3 "$VENV_DIR"
 fi
 
-uv pip install faster-whisper google-genai pycairo keyring textual numpy --python "$VENV_DIR"
+uv pip install -r requirements.txt --python "$VENV_DIR"
 
 if command -v nvidia-smi &> /dev/null || (command -v lspci &> /dev/null && lspci | grep -iq nvidia); then
     echo "⚡ Tarjeta NVIDIA detectada. Instalando librerías de aceleración CUDA (cuBLAS / cuDNN)..."
@@ -112,6 +112,7 @@ sed -i "1s|.*|#!$VENV_DIR/bin/python|" "$INSTALL_DIR/launch_wizard.py"
 chmod +x "$INSTALL_DIR/opendictate-daemon.py"
 chmod +x "$INSTALL_DIR/opendictate-client.py"
 chmod +x "$INSTALL_DIR/launch_wizard.py"
+chmod +x "$INSTALL_DIR/opendictate_config_ui.py"
 
 ln -sf "$INSTALL_DIR/opendictate-client.py" "$HOME/.local/bin/opendictate"
 chmod +x "$HOME/.local/bin/opendictate"
@@ -131,7 +132,7 @@ DESK_EOF
 
 echo "🔄 Iniciando demonio OpenDictate..."
 pkill -9 -f opendictate-daemon.py || true
-rm -f /tmp/opendictate.socket /tmp/opendictate_state.json*
+rm -f "${XDG_RUNTIME_DIR:-/tmp}/opendictate.socket" /tmp/opendictate_state.json*
 sleep 1
 
 export DISPLAY="${DISPLAY:-:0}"

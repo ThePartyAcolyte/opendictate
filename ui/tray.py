@@ -248,7 +248,7 @@ class TrayManager:
                     pass
             elif hasattr(self.indicator, "set_tooltip_text"):
                 try:
-                    self.indicator.set_tooltip_text("OpenDictate - Micrófono saturado")
+                    self.indicator.set_tooltip_text(self.i18n.t("tooltip_mic_saturated"))
                 except Exception:
                     pass
 
